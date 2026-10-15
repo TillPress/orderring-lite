@@ -68,6 +68,12 @@ class ORLT_Admin {
 	}
 
 	public function register_settings() {
+		// The Settings form posts to options.php, which requires manage_options by
+		// default. Grant save access to whoever can open the page (ORLT_Caps::manage(),
+		// e.g. shop_manager), matching OrderRing. The Auth Token and webhook base URL
+		// stay administrator-only in their sanitize callbacks.
+		add_filter( 'option_page_capability_orlt_settings', array( 'ORLT_Caps', 'manage' ) );
+
 		register_setting(
 			'orlt_settings',
 			'orlt_account_sid',
@@ -157,6 +163,13 @@ class ORLT_Admin {
 
 	public function sanitize_webhook_base( $value ) {
 		$value = esc_url_raw( trim( (string) $value ) );
+		$prev  = (string) get_option( 'orlt_webhook_base_url', '' );
+		// Shop managers can save this form (see register_settings()); the webhook
+		// origin used for Twilio signature checks stays administrator-only.
+		if ( $value !== $prev && ! current_user_can( 'manage_options' ) ) {
+			add_settings_error( 'orlt_webhook_base_url', 'orlt_webhook_cap', __( 'Only administrators can change the public site URL override.', 'orderring-lite' ) );
+			return $prev;
+		}
 		return $value;
 	}
 

@@ -187,6 +187,32 @@ class ORLT_Logger {
 		return absint( $order_id );
 	}
 
+	/**
+	 * Whether any log row carries this Twilio SID.
+	 *
+	 * @param string $sid Twilio SID.
+	 * @return bool
+	 */
+	public function has_sid( $sid ) {
+		global $wpdb;
+		$sid = sanitize_text_field( (string) $sid );
+		if ( $sid === '' ) {
+			return false;
+		}
+
+		$table = $this->table;
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching
+		$id = $wpdb->get_var(
+			$wpdb->prepare(
+				'SELECT id FROM %i WHERE twilio_sid = %s LIMIT 1',
+				$table,
+				$sid
+			)
+		);
+
+		return null !== $id && '' !== (string) $id;
+	}
+
 	public function phone_is_opted_out( $phone ) {
 		$norm = $this->normalize_phone( $phone );
 		if ( $norm === '' ) {

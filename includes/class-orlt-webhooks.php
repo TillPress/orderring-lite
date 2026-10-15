@@ -232,6 +232,29 @@ class ORLT_Webhooks {
 		}
 	}
 
+	/**
+	 * Whether an inbound MessageSid was already processed, and claim it if not.
+	 *
+	 * The transient catches Twilio's fast retries cheaply; a replay arriving after it
+	 * expired is still caught by the message log, which stores every inbound SID.
+	 *
+	 * @param string $sid    Twilio MessageSid ('' = cannot dedupe; never "seen").
+	 * @param string $prefix Transient key prefix.
+	 * @return bool
+	 */
+	public static function inbound_sid_seen( $sid, $prefix ) {
+		$sid = (string) $sid;
+		if ( '' === $sid ) {
+			return false;
+		}
+		$seen_key = $prefix . md5( $sid );
+		if ( get_transient( $seen_key ) ) {
+			return true;
+		}
+		set_transient( $seen_key, 1, DAY_IN_SECONDS );
+		return ORLT_Logger::instance()->has_sid( $sid );
+	}
+
 	private function incoming_sms() {
 		if ( ! $this->require_valid_twilio() ) {
 			return;
@@ -253,14 +276,10 @@ class ORLT_Webhooks {
 		// Idempotency: Twilio re-delivers a webhook when it doesn't receive a 200 in time.
 		// Without a guard, a retry would double-log the message, re-toggle opt-out, and duplicate
 		// order notes. Skip re-processing a MessageSid already handled (still return a valid 200).
-		if ( '' !== $sid ) {
-			$seen_key = 'orlt_in_sid_' . md5( $sid );
-			if ( get_transient( $seen_key ) ) {
-				header( 'Content-Type: text/xml; charset=utf-8' );
-				echo '<?xml version="1.0" encoding="UTF-8"?><Response></Response>';
-				return;
-			}
-			set_transient( $seen_key, 1, DAY_IN_SECONDS );
+		if ( self::inbound_sid_seen( $sid, 'orlt_in_sid_' ) ) {
+			header( 'Content-Type: text/xml; charset=utf-8' );
+			echo '<?xml version="1.0" encoding="UTF-8"?><Response></Response>';
+			return;
 		}
 
 		$logger   = ORLT_Logger::instance();

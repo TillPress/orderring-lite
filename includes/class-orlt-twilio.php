@@ -273,7 +273,17 @@ class ORLT_Twilio {
 			$replacements['{tracking_url}'] = $tracking['url'];
 		}
 
-		return str_ireplace( array_keys( $replacements ), array_values( $replacements ), $message );
+		// One pass over the template: a value inserted for one tag (customer-typed name,
+		// email, tracking number, store name) is never scanned again, so text such as a
+		// first name of "{order_number}" stays literal. Tags match case-insensitively.
+		return (string) preg_replace_callback(
+			'/\{[a-z_]+\}/i',
+			static function ( $m ) use ( $replacements ) {
+				$tag = strtolower( $m[0] );
+				return array_key_exists( $tag, $replacements ) ? (string) $replacements[ $tag ] : $m[0];
+			},
+			$message
+		);
 	}
 
 	/**
