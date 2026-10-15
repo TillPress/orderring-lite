@@ -19,6 +19,9 @@ class ORLT_Admin {
 		add_action( 'admin_init', array( $this, 'register_settings' ) );
 		add_action( 'admin_enqueue_scripts', array( $this, 'assets' ) );
 		add_action( 'wp_ajax_orlt_test_connection', array( $this, 'ajax_test' ) );
+		add_action( 'admin_post_orlt_copy_from_pro', array( $this, 'handle_copy_from_pro' ) );
+		add_action( 'admin_post_orlt_restore_copy_backup', array( $this, 'handle_restore_copy_backup' ) );
+		add_action( 'updated_option', array( $this, 'maybe_recover_deferred' ), 10, 3 );
 		add_filter( 'plugin_action_links_' . ORLT_PLUGIN_BASENAME, array( $this, 'action_links' ) );
 	}
 
@@ -58,7 +61,7 @@ class ORLT_Admin {
 					'testing' => __( 'Testing…', 'orderring-lite' ),
 					'sending' => __( 'Sending…', 'orderring-lite' ),
 					'failed'  => __( 'Request failed.', 'orderring-lite' ),
-					'force'   => __( 'Customer has not consented or opted out. Send anyway?', 'orderring-lite' ),
+					'force'   => __( 'Customer has not consented to SMS. Send anyway?', 'orderring-lite' ),
 				),
 			)
 		);
@@ -196,7 +199,7 @@ class ORLT_Admin {
 						<?php echo esc_html__( 'View OrderRing Pro', 'orderring-lite' ); ?> &rarr;
 					</a>
 				</p>
-				<p class="description"><?php echo esc_html__( 'OrderRing Lite remains permanently free and fully functional. No license key, no lock, and zero phone-home.', 'orderring-lite' ); ?></p>
+				<p class="description"><?php echo esc_html__( 'OrderRing Lite remains permanently free and fully functional. No license key, no lock, and no phone-home (only a support ticket you choose to send reaches Tillpress).', 'orderring-lite' ); ?></p>
 			</div>
 
 			<form method="post" action="options.php">
@@ -312,8 +315,140 @@ class ORLT_Admin {
 				<?php submit_button(); ?>
 			</form>
 
+			<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="margin:1em 0;">
+				<?php wp_nonce_field( 'orlt_copy_from_pro' ); ?>
+				<input type="hidden" name="action" value="orlt_copy_from_pro" />
+				<?php submit_button( __( 'Copy settings from OrderRing Pro', 'orderring-lite' ), 'secondary', 'submit', false ); ?>
+				<p class="description"><?php echo esc_html__( 'Copies Twilio credentials, status mapping, templates, and STOP list from OrderRing Pro into Lite. Your current Lite settings are backed up and can be restored.', 'orderring-lite' ); ?></p>
+			</form>
+			<?php if ( get_option( 'orlt_pro_copy_backup' ) ) : ?>
+			<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="margin:0 0 1em;">
+				<?php wp_nonce_field( 'orlt_restore_copy_backup' ); ?>
+				<input type="hidden" name="action" value="orlt_restore_copy_backup" />
+				<?php submit_button( __( 'Restore Lite settings backup', 'orderring-lite' ), 'secondary', 'submit', false ); ?>
+			</form>
+			<?php endif; ?>
 			<p class="orlt-legal"><?php echo esc_html__( 'Twilio and all related logos are trademarks of Twilio Inc. or its affiliates. OrderRing is not affiliated with, endorsed, or sponsored by Twilio Inc.', 'orderring-lite' ); ?></p>
 		</div>
 		<?php
 	}
+
+	public static function copy_option_map() {
+		return array(
+			'toc_account_sid'                => 'orlt_account_sid',
+			'toc_auth_token'                 => 'orlt_auth_token',
+			'toc_from_number'                => 'orlt_from_number',
+			'toc_status_ready_for_pickup'    => 'orlt_status_ready_for_pickup',
+			'toc_message_ready_for_pickup'   => 'orlt_message_ready_for_pickup',
+			'toc_default_pickup_message'     => 'orlt_message_ready_for_pickup',
+			'toc_auto_ready_enabled'         => 'orlt_auto_ready_enabled',
+			'toc_auto_ready_sms'             => 'orlt_auto_ready_sms',
+			'toc_ready_require_local_pickup' => 'orlt_ready_require_local_pickup',
+			'toc_checkout_consent_enabled'   => 'orlt_checkout_consent_enabled',
+			'toc_checkout_consent_required'  => 'orlt_checkout_consent_required',
+			'toc_checkout_consent_label'     => 'orlt_checkout_consent_label',
+			'toc_require_sms_consent'        => 'orlt_require_sms_consent',
+			'toc_stop_reply'                 => 'orlt_stop_reply',
+			'toc_start_reply'                => 'orlt_start_reply',
+			'toc_help_reply'                 => 'orlt_help_reply',
+			'toc_webhook_base_url'           => 'orlt_webhook_base_url',
+			'toc_pickup_match'               => 'orlt_pickup_match',
+		);
+	}
+
+	public static function copy_from_pro() {
+		$map     = self::copy_option_map();
+		$backup  = array();
+		$written = array();
+		foreach ( $map as $src => $dst ) {
+			if ( ! array_key_exists( $dst, $backup ) ) {
+				$backup[ $dst ] = get_option( $dst, null );
+			}
+			$val = get_option( $src, null );
+			if ( null === $val || false === $val || $val === '' ) {
+				continue;
+			}
+			if ( isset( $written[ $dst ] ) ) {
+				continue;
+			}
+			update_option( $dst, $val, false );
+			$written[ $dst ] = true;
+		}
+		update_option( 'orlt_pro_copy_backup', $backup, false );
+		self::import_pro_opt_outs();
+		return true;
+	}
+
+	public static function import_pro_opt_outs() {
+		global $wpdb;
+		if ( class_exists( 'ORLT_Logger' ) && class_exists( 'TOC_Logger' ) ) {
+			$pro = TOC_Logger::instance();
+			if ( method_exists( $pro, 'list_opt_out_phones' ) ) {
+				$lite = ORLT_Logger::instance();
+				foreach ( (array) $pro->list_opt_out_phones() as $phone ) {
+					$lite->add_opt_out_phone( (string) $phone );
+				}
+				return;
+			}
+		}
+		$list = get_option( 'toc_sms_opt_outs', array() );
+		if ( is_array( $list ) && class_exists( 'ORLT_Logger' ) ) {
+			$logger = ORLT_Logger::instance();
+			foreach ( $list as $entry ) {
+				$logger->add_opt_out_phone( is_array( $entry ) ? (string) ( $entry['phone'] ?? '' ) : (string) $entry );
+			}
+		}
+	}
+
+	public static function restore_copy_backup() {
+		$backup = get_option( 'orlt_pro_copy_backup', null );
+		if ( ! is_array( $backup ) ) {
+			return false;
+		}
+		foreach ( $backup as $key => $val ) {
+			if ( null === $val ) {
+				delete_option( $key );
+			} else {
+				update_option( $key, $val, false );
+			}
+		}
+		delete_option( 'orlt_pro_copy_backup' );
+		return true;
+	}
+
+	public function handle_copy_from_pro() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'Permission denied', 'orderring-lite' ), 403 );
+		}
+		check_admin_referer( 'orlt_copy_from_pro' );
+		self::copy_from_pro();
+		if ( class_exists( 'ORLT_Auto' ) ) {
+			ORLT_Auto::instance()->recover_deferred_notifications();
+		}
+		if ( function_exists( 'wp_safe_redirect' ) ) {
+			wp_safe_redirect( admin_url( 'admin.php?page=orderring-lite&orlt_copied=1' ) );
+			exit;
+		}
+	}
+
+	public function handle_restore_copy_backup() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'Permission denied', 'orderring-lite' ), 403 );
+		}
+		check_admin_referer( 'orlt_restore_copy_backup' );
+		self::restore_copy_backup();
+		if ( function_exists( 'wp_safe_redirect' ) ) {
+			wp_safe_redirect( admin_url( 'admin.php?page=orderring-lite&orlt_restored=1' ) );
+			exit;
+		}
+	}
+
+	public function maybe_recover_deferred( $option, $old, $new ) {
+		unset( $old, $new );
+		$watch = array( 'orlt_account_sid', 'orlt_auth_token', 'orlt_from_number' );
+		if ( in_array( (string) $option, $watch, true ) && class_exists( 'ORLT_Auto' ) ) {
+			ORLT_Auto::instance()->recover_deferred_notifications();
+		}
+	}
+
 }

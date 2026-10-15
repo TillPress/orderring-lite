@@ -38,6 +38,8 @@ $orlt_options = array(
 	'orlt_installed_at',
 	'orlt_review_nudge_dismissed',
 	'orlt_prefix_migrated',
+	// Backup written by "Copy settings from OrderRing Pro"; holds the prior Twilio SID/token.
+	'orlt_pro_copy_backup',
 	// Legacy 3-char-prefix options from installs that pre-date 1.0.5.
 	'orl_account_sid',
 	'orl_auth_token',
@@ -90,3 +92,19 @@ foreach ( array( 'administrator', 'shop_manager', 'editor', 'author', 'contribut
 	$orlt_role->remove_cap( 'orl_manage' );
 	$orlt_role->remove_cap( 'orl_send' );
 }
+
+// Help & demo page: demo data (only objects carrying the demo marker) and the per-user offer dismissal.
+$orlt_demo = get_option( 'orlt_demo_ids', array() );
+if ( is_array( $orlt_demo ) ) {
+	foreach ( (array) ( $orlt_demo['orders'] ?? array() ) as $orlt_id ) {
+		$orlt_order = function_exists( 'wc_get_order' ) ? wc_get_order( absint( $orlt_id ) ) : null;
+		if ( $orlt_order && $orlt_order->get_meta( '_orlt_demo' ) ) {
+			foreach ( $orlt_order->get_refunds() as $orlt_refund ) {
+				$orlt_refund->delete( true );
+			}
+			$orlt_order->delete( true );
+		}
+	}
+}
+delete_option( 'orlt_demo_ids' );
+delete_metadata( 'user', 0, 'orlt_offer_dismissed', '', true );

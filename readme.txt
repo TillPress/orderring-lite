@@ -4,7 +4,7 @@ Tags: woocommerce, sms, twilio, pickup, notifications
 Requires at least: 6.2
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 1.0.6
+Stable tag: 1.0.10
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 WC requires at least: 7.0
@@ -21,6 +21,7 @@ OrderRing Lite texts customers when an order is ready for pickup, using **your**
 * STOP / HELP / START keyword handling
 * Optional Local Pickup filter
 * Compatible with WooCommerce HPOS
+* Help & demo page: one-click demo order, the exact pickup text a customer would get, and a support ticket form
 
 **Bring your own Twilio account.** The plugin does not sell or provide messaging services. Message costs are billed by Twilio to you — OrderRing adds zero markup.
 
@@ -38,7 +39,9 @@ What is sent, and when:
 * **When you use "Test connection":** the plugin makes a read-only call to the Twilio API to confirm your credentials are valid.
 * **When a customer replies (STOP/HELP/START or any inbound text) or Twilio reports delivery status:** Twilio calls this site's webhook URLs. The plugin verifies Twilio's request signature and stores the message/status in your own database. No customer data is sent out in this direction — it is received from Twilio.
 
-No data is sent to Twilio unless you have entered Twilio credentials and either send a message or receive one. This plugin sends no data to the plugin author or any other third party — there is no license check, telemetry, or phone-home.
+No data is sent to Twilio unless you have entered Twilio credentials and either send a message or receive one. Apart from the optional support ticket below, this plugin sends no data to the plugin author or any other third party — there is no license check, telemetry, or phone-home.
+
+**Support tickets (only when you send one):** the Help & demo page has a support form. When an administrator fills it in, ticks the consent box, and presses **Send ticket**, the plugin sends the name, reply-to email, topic, subject, message, this site's address, and (if ticked) a system report of WordPress/WooCommerce/PHP versions, theme, and active plugin names to the Tillpress support desk at `https://tillpress.com/wp-json/tp/v1/support`. Nothing is sent automatically, in the background, or on a schedule, and no passwords, keys, or customer/order data are included. Service provider: Tillpress (Alex Software Holdings LLC). Privacy policy: https://tillpress.com/privacy/ — Terms: https://tillpress.com/terms/ . "Email instead" opens the same ticket in your own email app and sends nothing from the site.
 
 Twilio's terms and privacy policy:
 
@@ -56,7 +59,7 @@ Twilio's terms and privacy policy:
 == Frequently Asked Questions ==
 
 = Do I need a Tillpress account? =
-No. OrderRing Lite is completely self-contained. There is no account to create, no login, no license key, and no call to Tillpress (the author's) servers — ever. You only need your own Twilio account to send messages.
+No. OrderRing Lite is completely self-contained. There is no account to create, no login, and no license key. The plugin never contacts Tillpress (the author's) servers unless you choose to send a support ticket from the Help & demo page. You only need your own Twilio account to send messages.
 
 = Does it work with a Twilio trial account? =
 Yes. Enter the trial Account SID, Auth Token, and From Number on the settings screen like any other Twilio account. Twilio trial accounts can only send to numbers you have verified in the Twilio Console, so use that for a smoke test. When you are ready to text real customers, upgrade the Twilio account itself — this plugin does not sell Twilio service and has no trial of its own.
@@ -71,7 +74,7 @@ Whatever Twilio charges for that destination — typically a few cents in the US
 From your own Twilio account. You contract with Twilio directly and Twilio bills you for every message at Twilio's rates. OrderRing Lite adds no markup and never handles payment for messaging — the plugin only calls the Twilio API with the credentials you enter.
 
 = What data leaves my site? =
-Only what you send to Twilio, and only when you (or the "Ready for Pickup" automation) send a message: the destination phone number, your Twilio "from" number, and the message body (which may include the customer's first name, order number, order total, and tracking number from the merge tags you configure). Nothing is sent to the plugin author or any other third party — there is no license check, telemetry, or phone-home. See the "External services" section above for the full breakdown.
+Only what you send to Twilio, and only when you (or the "Ready for Pickup" automation) send a message: the destination phone number, your Twilio "from" number, and the message body (which may include the customer's first name, order number, order total, and tracking number from the merge tags you configure). Nothing is sent to the plugin author or any other third party, except a support ticket you choose to send from the Help & demo page — there is no license check, telemetry, or phone-home. See the "External services" section above for the full breakdown.
 
 = Do I need A2P 10DLC? =
 If you text US mobile numbers, carriers require A2P 10DLC (or a verified toll-free number). Register that in the Twilio Console. This plugin does not file it for you.
@@ -81,6 +84,15 @@ No. Every feature listed above works without a key, trial, or phone-home to the 
 
 = What if I also install OrderRing (the paid plugin)? =
 Lite steps aside so you do not send duplicate SMS. While both are active, Lite stays idle and shows a notice on the Plugins screen. You can deactivate Lite.
+
+= How do I get support? =
+Open **OrderRing Lite → Help & demo**. The support form there sends your ticket straight to the Tillpress support desk at tillpress.com after you tick the consent box and press Send ticket; you get a ticket number on screen and the reply comes by email. It includes your name, email, message, this site's address, and (optional) a system report of versions, theme, and active plugins; never passwords, keys, or customer data. Prefer email? "Email instead" opens the same ticket in your own email app. You can also use the WordPress.org support forum for this plugin or https://tillpress.com/support/. Replies Monday to Friday, 09:00 to 17:00 Pacific Time; first reply within one business day.
+
+= Is there a demo? =
+Yes. On **OrderRing Lite → Help & demo**, click **Create demo data**. It creates one order in Ready for Pickup with Local Pickup and SMS consent, so you can see the order-screen SMS box, the consent badge, and the exact text your customer would receive. Demo orders can never be texted, even if you press Send. Everything is labelled "Demo", never emailed or texted, and removed with one click (or when you uninstall the plugin).
+
+= Does the plugin advertise anything? =
+Only on its own Help & demo page: one box describing the paid OrderRing plugin with an optional 20% discount code. It can be hidden for good with "Hide this offer". There are no dashboard-wide notices, no tracking, and no referral IDs.
 
 = Can I set credentials in wp-config.php? =
 Yes. Define `ORLT_ACCOUNT_SID`, `ORLT_AUTH_TOKEN`, and/or `ORLT_FROM_NUMBER` (the older `ORL_` names still work). Constants override the settings fields so credentials can stay out of the database.
@@ -93,6 +105,26 @@ Yes. Define `ORLT_ACCOUNT_SID`, `ORLT_AUTH_TOKEN`, and/or `ORLT_FROM_NUMBER` (th
 4. Twilio credentials with "Test connection" — a read-only call that confirms your account is valid before you send.
 
 == Changelog ==
+
+
+= 1.0.10 =
+* Fix: a number that replied STOP can no longer be texted from the order screen, even with "send anyway". "Send anyway" now only overrides missing checkout consent.
+* Fix: uninstalling now also removes the backup of Twilio settings copied from OrderRing Pro.
+* Readme: the FAQ now mentions the opt-in support ticket as the one time the plugin contacts Tillpress.
+= 1.0.9 =
+* Fix: inbound SMS is attributed only on a unique full-number match; suffix collisions stay unattributed.
+* New: Copy settings from OrderRing Pro (credentials, templates, STOP list) with a reversible backup. No automatic copy.
+* Fix: missing Twilio credentials defer pickup SMS instead of completing the notification; they resume when settings are saved.
+
+= 1.0.8 =
+* Fix: Lite keeps sending pickup SMS when OrderRing Pro is installed but unlicensed or expired, and stays idle when Pro is licensed (no duplicate texts).
+* Fix: STOP and START are keyed by the full international number, so two numbers sharing their last 10 digits no longer share an opt-out.
+
+= 1.0.7 =
+* New: Help & demo page (OrderRing Lite → Help & demo, also linked from the Plugins screen).
+* New: one-click demo order in Ready for Pickup with a preview of the exact pickup text. Demo orders are never texted or emailed and are removed with one click or on uninstall.
+* New: support ticket form that sends straight to the Tillpress support desk after you tick the consent box and press Send ticket (ticket number shown on screen), with an optional system report (no passwords, keys, or customer data). "Email instead" opens your own email app.
+* New: optional, dismissible 20% offer for the paid OrderRing plugin, shown only on the Help & demo page.
 
 = 1.0.6 =
 * Fix: "Use Ready for Pickup template" restores the saved template instead of your edited text.
@@ -121,6 +153,9 @@ Yes. Define `ORLT_ACCOUNT_SID`, `ORLT_AUTH_TOKEN`, and/or `ORLT_FROM_NUMBER` (th
 * First public release: Ready-for-pickup SMS, checkout consent, STOP/HELP/START
 
 == Upgrade Notice ==
+
+= 1.0.7 =
+Adds a Help & demo page: demo order, in-plugin support tickets, and system report. No settings change.
 
 = 1.0.5 =
 Internal prefix change to "orlt" for wordpress.org compliance. Your settings, opt-out lists, and message logs migrate automatically — no reconfiguration needed.

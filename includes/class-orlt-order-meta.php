@@ -109,7 +109,8 @@ class ORLT_Order_Meta {
 
 		$result = ORLT_Twilio::instance()->send_sms( $phone, $body, $order_id, $force );
 		if ( empty( $result['success'] ) ) {
-			$code = ( isset( $result['error'] ) && ( false !== strpos( $result['error'], 'consented' ) || false !== strpos( $result['error'], 'opted out' ) ) )
+			// Only missing consent can be overridden; a STOP opt-out cannot (send_sms enforces it).
+			$code = ( empty( $result['opted_out'] ) && isset( $result['error'] ) && false !== strpos( $result['error'], 'consented' ) )
 				? 'needs_force'
 				: '';
 			wp_send_json_error(

@@ -21,6 +21,56 @@ class ORLT_Twilio {
 		return (bool) preg_match( '/^\+[1-9]\d{7,14}$/', (string) $number );
 	}
 
+	/**
+	 * True when OrderRing Pro is installed AND currently licensed to send.
+	 *
+	 * @return bool
+	 */
+	public static function pro_is_licensed() {
+		if ( class_exists( 'TOC_Twilio', false ) && method_exists( 'TOC_Twilio', 'pro_active' ) ) {
+			return (bool) TOC_Twilio::pro_active();
+		}
+		if ( class_exists( 'TOC_License', false ) && method_exists( 'TOC_License', 'is_pro' ) ) {
+			return (bool) TOC_License::instance()->is_pro();
+		}
+		return false;
+	}
+
+	/**
+	 * @param WP_Error $err Transport error.
+	 * @return bool
+	 */
+	public static function is_timeout_error( $err ) {
+		if ( ! is_wp_error( $err ) ) {
+			return false;
+		}
+		$code = (string) $err->get_error_code();
+		$msg  = strtolower( (string) $err->get_error_message() );
+		if ( $code === 'http_request_timeout' ) {
+			return true;
+		}
+		return ( false !== strpos( $msg, 'timed out' ) || false !== strpos( $msg, 'timeout' ) || false !== strpos( $msg, 'curl error 28' ) );
+	}
+
+	/**
+	 * Connection reset / receive errors after the request left this host.
+	 *
+	 * @param WP_Error $err Transport error.
+	 * @return bool
+	 */
+	public static function is_receive_error( $err ) {
+		if ( ! is_wp_error( $err ) ) {
+			return false;
+		}
+		$msg = strtolower( (string) $err->get_error_message() );
+		foreach ( array( 'connection reset', 'recv failure', 'curl error 56', 'curl error 52', 'empty reply', 'ssl_connect', 'ssl_read' ) as $needle ) {
+			if ( false !== strpos( $msg, $needle ) ) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	/** Public site base for webhooks/TwiML. Optional override for reverse proxies. */
 	public function public_base_url() {
 		$override = trim( (string) get_option( 'orlt_webhook_base_url', '' ) );
@@ -138,11 +188,17 @@ class ORLT_Twilio {
 		$response = wp_remote_request( $url, $args );
 
 		if ( is_wp_error( $response ) ) {
+			$timed_out    = self::is_timeout_error( $response );
+			$receive      = self::is_receive_error( $response );
+			$request_sent = ( 'POST' === $method ) && ( $timed_out || $receive );
 			return array(
-				'success' => false,
-				'code'    => 0,
-				'data'    => array(),
-				'error'   => $response->get_error_message(),
+				'success'       => false,
+				'code'          => 0,
+				'data'          => array(),
+				'error'         => $response->get_error_message(),
+				'network_error' => true,
+				'timed_out'     => $timed_out,
+				'request_sent'  => $request_sent,
 			);
 		}
 
@@ -443,11 +499,25 @@ class ORLT_Twilio {
 	}
 
 	public function send_sms( $to, $body, $order_id = 0, $force = false ) {
+		if ( self::pro_is_licensed() ) {
+			return array(
+				'success'     => false,
+				'skipped_pro' => true,
+				'error'       => __( 'OrderRing Pro is licensed and handling SMS. Lite will not send.', 'orderring-lite' ),
+			);
+		}
+		if ( $order_id && class_exists( 'ORLT_Demo' ) && ORLT_Demo::is_demo_order( $order_id ) ) {
+			return array(
+				'success' => false,
+				'error'   => __( 'This is an OrderRing Lite demo order. Demo orders are never texted.', 'orderring-lite' ),
+			);
+		}
 		$creds = $this->get_credentials();
 		if ( ! $this->is_configured() ) {
 			return array(
-				'success' => false,
-				'error'   => __( 'Twilio credentials not configured.', 'orderring-lite' ),
+				'success'       => false,
+				'failure_class' => 'deferred',
+				'error'         => __( 'Twilio credentials not configured.', 'orderring-lite' ),
 			);
 		}
 
@@ -459,10 +529,13 @@ class ORLT_Twilio {
 			);
 		}
 
-		if ( ! $force && $this->phone_is_opted_out( $to ) ) {
+		// A number that replied STOP is never texted, even with $force (TCPA / CTIA).
+		// $force only bypasses the missing-consent check below; START is the only way back.
+		if ( $this->phone_is_opted_out( $to ) ) {
 			return array(
-				'success' => false,
-				'error'   => __( 'Phone number has opted out (STOP).', 'orderring-lite' ),
+				'success'   => false,
+				'opted_out' => true,
+				'error'     => __( 'Phone number has opted out (STOP).', 'orderring-lite' ),
 			);
 		}
 
@@ -556,7 +629,7 @@ class ORLT_Twilio {
 		$phone = ORLT_Logger::instance()->normalize_phone( $order->get_billing_phone() );
 		if ( $phone ) {
 			$is_out = is_array( $opted_out_last10 )
-				? in_array( ORLT_Logger::last10( $phone ), $opted_out_last10, true )
+				? in_array( $phone, $opted_out_last10, true )
 				: $this->phone_is_opted_out( $phone );
 			if ( $is_out ) {
 				return false;

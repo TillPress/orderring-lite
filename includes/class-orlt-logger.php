@@ -82,8 +82,8 @@ class ORLT_Logger {
 	}
 
 	public static function phones_match( $a, $b ) {
-		$na = self::last10( $a );
-		$nb = self::last10( $b );
+		$na = self::instance()->normalize_phone( $a );
+		$nb = self::instance()->normalize_phone( $b );
 		if ( '' === $na || '' === $nb ) {
 			return false;
 		}
@@ -188,27 +188,34 @@ class ORLT_Logger {
 	}
 
 	public function phone_is_opted_out( $phone ) {
-		global $wpdb;
-		$digits = $this->digits_only( $phone );
-		if ( strlen( $digits ) < 7 ) {
+		$norm = $this->normalize_phone( $phone );
+		if ( $norm === '' ) {
 			return false;
 		}
+		foreach ( $this->opt_out_tables() as $table ) {
+			if ( $this->opt_out_identity_id( $table, $norm ) ) {
+				return true;
+			}
+		}
+		return false;
+	}
 
-		$last10 = self::last10( $digits );
-		$table  = $this->opt_outs_table;
-
-		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching
-		$found = $wpdb->get_var(
-			$wpdb->prepare(
-				'SELECT id FROM %i WHERE phone_digits = %s OR phone_digits = %s OR phone_last10 = %s LIMIT 1',
-				$table,
-				$digits,
-				$last10,
-				$last10
-			)
-		);
-
-		return ! empty( $found );
+	/**
+	 * Opt-out tables to consult. Includes Pro's table when Pro has been installed
+	 * so STOP is honoured across both plugins.
+	 *
+	 * @return string[]
+	 */
+	public function opt_out_tables() {
+		global $wpdb;
+		$tables = array( $this->opt_outs_table );
+		if ( get_option( 'toc_db_version' ) ) {
+			$pro = $wpdb->prefix . 'toc_sms_opt_outs';
+			if ( $pro !== $this->opt_outs_table ) {
+				$tables[] = $pro;
+			}
+		}
+		return array_values( array_unique( $tables ) );
 	}
 
 	public function add_opt_out_phone( $phone ) {
@@ -223,18 +230,7 @@ class ORLT_Logger {
 			return false;
 		}
 
-		$table = $this->opt_outs_table;
-		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching
-		$existing = $wpdb->get_var(
-			$wpdb->prepare(
-				'SELECT id FROM %i WHERE phone_digits = %s OR phone_last10 = %s LIMIT 1',
-				$table,
-				$digits,
-				self::last10( $digits )
-			)
-		);
-
-		if ( $existing ) {
+		if ( $this->opt_out_identity_id( $this->opt_outs_table, $norm ) ) {
 			return true;
 		}
 
@@ -253,42 +249,95 @@ class ORLT_Logger {
 
 	public function remove_opt_out_phone( $phone ) {
 		global $wpdb;
-		$digits = $this->digits_only( $phone );
-		if ( $digits === '' ) {
+		$norm = $this->normalize_phone( $phone );
+		if ( $norm === '' ) {
 			return;
 		}
+		foreach ( $this->opt_out_tables() as $table ) {
+			$ids = $this->opt_out_identity_ids( $table, $norm );
+			if ( ! $ids ) {
+				continue;
+			}
+			$ids   = array_map( 'absint', $ids );
+			$table = preg_replace( '/[^A-Za-z0-9_]/', '', (string) $table );
+			foreach ( $ids as $id ) {
+				// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching
+				$wpdb->query( $wpdb->prepare( 'DELETE FROM %i WHERE id = %d', $table, $id ) );
+			}
+		}
+	}
 
-		$last10 = self::last10( $digits );
-		$table  = $this->opt_outs_table;
-
+	/**
+	 * @param string $table Table name.
+	 * @param string $norm  Canonical E.164.
+	 * @return int[]
+	 */
+	private function opt_out_identity_ids( $table, $norm ) {
+		global $wpdb;
+		$digits = $this->digits_only( $norm );
+		if ( $digits === '' ) {
+			return array();
+		}
+		$table = preg_replace( '/[^A-Za-z0-9_]/', '', (string) $table );
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching
-		$wpdb->query(
+		$rows = $wpdb->get_results(
 			$wpdb->prepare(
-				'DELETE FROM %i WHERE phone_digits = %s OR phone_digits = %s OR phone_last10 = %s',
+				'SELECT id, phone, phone_digits FROM %i WHERE phone = %s OR phone_digits = %s OR phone_last10 = %s',
 				$table,
+				$norm,
 				$digits,
-				$last10,
-				$last10
+				self::last10( $digits )
 			)
 		);
+		if ( ! is_array( $rows ) ) {
+			return array();
+		}
+		$ids = array();
+		foreach ( $rows as $row ) {
+			$stored_digits = isset( $row->phone_digits ) ? (string) $row->phone_digits : '';
+			$stored_phone  = isset( $row->phone ) ? (string) $row->phone : '';
+			if ( $stored_digits === $digits || $stored_phone === $norm ) {
+				$ids[] = (int) $row->id;
+				continue;
+			}
+			if ( $stored_phone !== '' && $this->normalize_phone( $stored_phone ) === $norm ) {
+				$ids[] = (int) $row->id;
+			}
+		}
+		return $ids;
+	}
+
+	/**
+	 * @param string $table Table name.
+	 * @param string $norm  Canonical E.164.
+	 * @return int
+	 */
+	private function opt_out_identity_id( $table, $norm ) {
+		$ids = $this->opt_out_identity_ids( $table, $norm );
+		return $ids ? $ids[0] : 0;
 	}
 
 	public function find_order_by_phone( $phone ) {
-		$digits = $this->digits_only( $phone );
+		$from_e164 = $this->normalize_phone( $phone );
+		if ( $from_e164 === '' ) {
+			return 0;
+		}
+		$digits = $this->digits_only( $from_e164 );
 		if ( strlen( $digits ) < 7 ) {
 			return 0;
 		}
-
 		$tail = substr( $digits, -10 );
 
-		$from_log = $this->find_order_id_from_communications( $tail );
-		if ( $from_log ) {
-			return $from_log;
+		$candidate_ids = array();
+		foreach ( $this->find_communication_candidates( $tail ) as $row ) {
+			$row_phone = isset( $row->phone ) ? (string) $row->phone : '';
+			$oid       = isset( $row->order_id ) ? (int) $row->order_id : 0;
+			if ( $oid > 0 && $this->normalize_phone( $row_phone ) === $from_e164 ) {
+				$candidate_ids[ $oid ] = true;
+			}
 		}
-
-		$from_billing = $this->find_order_id_from_billing_phone( $tail );
-		if ( $from_billing ) {
-			return $from_billing;
+		foreach ( $this->find_billing_candidate_ids( $tail ) as $oid ) {
+			$candidate_ids[ (int) $oid ] = true;
 		}
 
 		$statuses = array( 'processing', 'completed', 'on-hold', 'pending', 'ready-for-pickup' );
@@ -311,26 +360,49 @@ class ORLT_Logger {
 			)
 		);
 
-		foreach ( $orders as $order ) {
+		foreach ( (array) $orders as $order ) {
 			if ( ! is_callable( array( $order, 'get_billing_phone' ) ) ) {
 				continue;
 			}
-			$billing = $this->digits_only( $order->get_billing_phone() );
-			if ( $billing !== '' && substr( $billing, -10 ) === $tail ) {
-				return $order->get_id();
+			$candidate_ids[ (int) $order->get_id() ] = true;
+		}
+
+		$exact = array();
+		foreach ( array_keys( $candidate_ids ) as $oid ) {
+			$oid   = (int) $oid;
+			$order = wc_get_order( $oid );
+			if ( $this->order_billing_matches_from( $order, $from_e164 ) ) {
+				$exact[ $oid ] = $order;
 			}
 		}
 
+		if ( count( $exact ) === 1 ) {
+			return (int) key( $exact );
+		}
 		return 0;
 	}
 
-	private function find_order_id_from_communications( $tail ) {
-		global $wpdb;
+	public function order_billing_matches_from( $order, $from_e164 ) {
+		if ( ! is_object( $order ) || ! is_callable( array( $order, 'get_billing_phone' ) ) ) {
+			return false;
+		}
+		$from_e164 = (string) $from_e164;
+		if ( $from_e164 === '' ) {
+			return false;
+		}
+		$country = is_callable( array( $order, 'get_billing_country' ) ) ? (string) $order->get_billing_country() : '';
+		$norm    = $this->normalize_phone( $order->get_billing_phone(), $country );
+		return $norm !== '' && $norm === $from_e164;
+	}
 
+	private function find_communication_candidates( $tail ) {
+		global $wpdb;
+		if ( ! is_object( $wpdb ) || ! method_exists( $wpdb, 'get_results' ) ) {
+			return array();
+		}
 		$like  = $this->phone_like_needle( $tail );
 		$limit = $this->inbound_phone_lookup_limit();
 		$table = $this->table;
-
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching
 		$rows = $wpdb->get_results(
 			$wpdb->prepare(
@@ -340,35 +412,23 @@ class ORLT_Logger {
 				$limit
 			)
 		);
-
-		if ( ! $rows ) {
-			return 0;
-		}
-
-		foreach ( $rows as $row ) {
-			$row_digits = $this->digits_only( $row->phone );
-			if ( $row_digits !== '' && substr( $row_digits, -10 ) === $tail ) {
-				return (int) $row->order_id;
-			}
-		}
-
-		return 0;
+		return is_array( $rows ) ? $rows : array();
 	}
 
-	private function find_order_id_from_billing_phone( $tail ) {
+	private function find_billing_candidate_ids( $tail ) {
 		global $wpdb;
-
+		if ( ! is_object( $wpdb ) || ! method_exists( $wpdb, 'get_col' ) ) {
+			return array();
+		}
 		$like  = $this->phone_like_needle( $tail );
 		$limit = $this->inbound_phone_lookup_limit();
 		$ids   = array();
-
-		$hpos = false;
+		$hpos  = false;
 		if ( class_exists( '\Automattic\WooCommerce\Utilities\OrderUtil' )
 			&& method_exists( '\Automattic\WooCommerce\Utilities\OrderUtil', 'custom_orders_table_usage_is_enabled' )
 		) {
 			$hpos = \Automattic\WooCommerce\Utilities\OrderUtil::custom_orders_table_usage_is_enabled();
 		}
-
 		if ( $hpos ) {
 			$addresses = $wpdb->prefix . 'wc_order_addresses';
 			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching
@@ -380,7 +440,7 @@ class ORLT_Logger {
 					$limit
 				)
 			);
-		} else {
+		} elseif ( isset( $wpdb->postmeta ) ) {
 			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching
 			$ids = $wpdb->get_col(
 				$wpdb->prepare(
@@ -391,26 +451,7 @@ class ORLT_Logger {
 				)
 			);
 		}
-
-		if ( empty( $ids ) ) {
-			return 0;
-		}
-
-		foreach ( $ids as $order_id ) {
-			$order = wc_get_order( (int) $order_id );
-			if ( ! $order ) {
-				continue;
-			}
-			if ( ! is_callable( array( $order, 'get_billing_phone' ) ) ) {
-				continue;
-			}
-			$billing = $this->digits_only( $order->get_billing_phone() );
-			if ( $billing !== '' && substr( $billing, -10 ) === $tail ) {
-				return (int) $order_id;
-			}
-		}
-
-		return 0;
+		return is_array( $ids ) ? array_map( 'intval', $ids ) : array();
 	}
 
 	private function phone_like_needle( $tail ) {
@@ -428,7 +469,7 @@ class ORLT_Logger {
 		return max( 5, min( 100, $limit ) );
 	}
 
-	public function normalize_phone( $phone ) {
+	public function normalize_phone( $phone, $country_iso = '' ) {
 		$phone = preg_replace( '/[^0-9+]/', '', (string) $phone );
 		if ( $phone === '' || $phone === '+' ) {
 			return '';
@@ -443,7 +484,7 @@ class ORLT_Logger {
 			return '' === $rest ? '' : '+' . $rest;
 		}
 
-		$cc = $this->default_country_code();
+		$cc = $this->calling_code_for_iso( $country_iso );
 
 		if ( strpos( $phone, '0' ) === 0 ) {
 			$national = ltrim( $phone, '0' );
@@ -466,6 +507,15 @@ class ORLT_Logger {
 		$cc = apply_filters( 'orlt_default_country_code', $cc );
 		$cc = preg_replace( '/\D/', '', (string) $cc );
 		return '' === $cc ? '1' : $cc;
+	}
+
+	public function calling_code_for_iso( $iso ) {
+		$iso = strtoupper( substr( (string) $iso, 0, 2 ) );
+		$map = $this->calling_code_map();
+		if ( $iso !== '' && isset( $map[ $iso ] ) ) {
+			return $map[ $iso ];
+		}
+		return $this->default_country_code();
 	}
 
 	public function calling_code_map() {

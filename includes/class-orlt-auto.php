@@ -116,7 +116,10 @@ class ORLT_Auto {
 
 		if ( ! empty( $result['success'] ) ) {
 			$order->add_order_note( __( 'OrderRing Lite: Ready-for-pickup SMS sent.', 'orderring-lite' ) );
+			$order->update_meta_data( '_orlt_notified_ready_for_pickup_at', time() );
+			$order->delete_meta_data( '_orlt_deferred_ready' );
 		} else {
+			$deferred = ! empty( $result['failure_class'] ) && 'deferred' === $result['failure_class'];
 			$order->add_order_note(
 				sprintf(
 					/* translators: %s: error */
@@ -124,9 +127,42 @@ class ORLT_Auto {
 					$result['error'] ?? 'unknown'
 				)
 			);
+			if ( $deferred ) {
+				$order->update_meta_data( '_orlt_deferred_ready', time() );
+			} else {
+				$order->update_meta_data( '_orlt_notified_ready_for_pickup_at', time() );
+			}
 		}
 
-		$order->update_meta_data( '_orlt_notified_ready_for_pickup_at', time() );
 		$order->save();
+	}
+
+	public function recover_deferred_notifications() {
+		if ( ! function_exists( 'wc_get_orders' ) ) {
+			return;
+		}
+		$after  = gmdate( 'Y-m-d H:i:s', time() - ( 7 * DAY_IN_SECONDS ) );
+		$status = class_exists( 'ORLT_Statuses' ) ? ORLT_Statuses::bare_status( ORLT_Statuses::mapped_ready_status() ) : 'ready-for-pickup';
+		$orders = wc_get_orders(
+			array(
+				'limit'        => 40,
+				'status'       => $status,
+				'type'         => 'shop_order',
+				'date_created' => '>' . $after,
+				'return'       => 'objects',
+			)
+		);
+		foreach ( (array) $orders as $order ) {
+			if ( ! is_object( $order ) || ! is_callable( array( $order, 'get_id' ) ) ) {
+				continue;
+			}
+			if ( $order->get_meta( '_orlt_notified_ready_for_pickup_at' ) ) {
+				continue;
+			}
+			if ( ! $order->get_meta( '_orlt_deferred_ready' ) ) {
+				continue;
+			}
+			$this->process_order( (int) $order->get_id() );
+		}
 	}
 }
