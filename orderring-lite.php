@@ -3,7 +3,7 @@
  * Plugin Name:       OrderRing Lite
  * Plugin URI:        https://tillpress.com/lite/
  * Description:       Ready-for-pickup SMS for WooCommerce via your own Twilio account. Checkout consent and STOP/HELP/START included. Bring your own Twilio account — you pay Twilio directly, zero markup.
- * Version:           1.0.6
+ * Version:           1.0.10
  * Author:            Tillpress
  * Author URI:        https://tillpress.com
  * Requires at least: 6.2
@@ -19,7 +19,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'ORLT_VERSION', '1.0.6' );
+define( 'ORLT_VERSION', '1.0.10' );
 define( 'ORLT_BRAND_NAME', 'OrderRing Lite' );
 define( 'ORLT_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ORLT_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
@@ -36,6 +36,9 @@ require_once ORLT_PLUGIN_DIR . 'includes/class-orlt-statuses.php';
 require_once ORLT_PLUGIN_DIR . 'includes/class-orlt-auto.php';
 require_once ORLT_PLUGIN_DIR . 'includes/class-orlt-checkout.php';
 require_once ORLT_PLUGIN_DIR . 'includes/class-orlt-review-nudge.php';
+require_once ORLT_PLUGIN_DIR . 'includes/class-orlt-demo.php';
+require_once ORLT_PLUGIN_DIR . 'includes/class-orlt-support.php';
+require_once ORLT_PLUGIN_DIR . 'includes/class-orlt-hub.php';
 
 final class ORLT_Plugin {
 
@@ -215,10 +218,14 @@ final class ORLT_Plugin {
 		ORLT_Auto::instance();
 		ORLT_Checkout::instance();
 		ORLT_Review_Nudge::instance();
+		if ( is_admin() ) {
+			ORLT_Support::instance();
+			ORLT_Hub::instance();
+		}
 	}
 
 	public function pro_is_active() {
-		return defined( 'TOC_VERSION' ) || class_exists( 'Twilio_Order_Communicator', false );
+		return class_exists( 'ORLT_Twilio', false ) && ORLT_Twilio::pro_is_licensed();
 	}
 
 	public function pro_active_notice() {
@@ -227,7 +234,7 @@ final class ORLT_Plugin {
 			return;
 		}
 		echo '<div class="notice notice-info"><p>';
-		echo esc_html__( 'OrderRing (Pro) is active, so OrderRing Lite is idle. You can deactivate Lite — Pro already includes these SMS tools.', 'orderring-lite' );
+		echo esc_html__( 'OrderRing Pro is licensed and sending, so OrderRing Lite is idle. You can deactivate Lite — Pro already includes these SMS tools.', 'orderring-lite' );
 		echo '</p></div>';
 	}
 
