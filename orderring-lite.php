@@ -3,7 +3,7 @@
  * Plugin Name:       OrderRing Lite
  * Plugin URI:        https://tillpress.com/lite/
  * Description:       Ready-for-pickup SMS for WooCommerce via your own Twilio account. Checkout consent and STOP/HELP/START included. Bring your own Twilio account — you pay Twilio directly, zero markup.
- * Version:           1.0.10
+ * Version:           1.0.11
  * Author:            Tillpress
  * Author URI:        https://tillpress.com
  * Requires at least: 6.2
@@ -19,7 +19,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'ORLT_VERSION', '1.0.10' );
+define( 'ORLT_VERSION', '1.0.11' );
 define( 'ORLT_BRAND_NAME', 'OrderRing Lite' );
 define( 'ORLT_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ORLT_PLUGIN_URL', plugin_dir_url( __FILE__ ) );

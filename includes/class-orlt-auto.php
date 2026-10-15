@@ -111,7 +111,8 @@ class ORLT_Auto {
 		}
 
 		$twilio  = ORLT_Twilio::instance();
-		$message = $twilio->merge_tags( self::get_message_template(), $order );
+		// send_sms() applies merge tags for $order_id (once).
+		$message = self::get_message_template();
 		$result  = $twilio->send_sms( $phone, $message, $order_id, false );
 
 		if ( ! empty( $result['success'] ) ) {

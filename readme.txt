@@ -4,7 +4,7 @@ Tags: woocommerce, sms, twilio, pickup, notifications
 Requires at least: 6.2
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 1.0.10
+Stable tag: 1.0.11
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 WC requires at least: 7.0
@@ -107,6 +107,10 @@ Yes. Define `ORLT_ACCOUNT_SID`, `ORLT_AUTH_TOKEN`, and/or `ORLT_FROM_NUMBER` (th
 == Changelog ==
 
 
+= 1.0.11 =
+* Fix: merge tags in the pickup text are filled in once, so a customer name that looks like a tag is not expanded.
+* Fix: a repeated Twilio webhook for the same inbound message is ignored even after 24 hours.
+* Fix: shop managers can save the settings page they can open. The public site URL override stays admin-only.
 = 1.0.10 =
 * Fix: a number that replied STOP can no longer be texted from the order screen, even with "send anyway". "Send anyway" now only overrides missing checkout consent.
 * Fix: uninstalling now also removes the backup of Twilio settings copied from OrderRing Pro.
