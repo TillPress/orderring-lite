@@ -3,12 +3,14 @@
  * Plugin Name:       OrderRing Lite
  * Plugin URI:        https://tillpress.com/lite/
  * Description:       Ready-for-pickup SMS for WooCommerce via your own Twilio account. Checkout consent and STOP/HELP/START included. Bring your own Twilio account — you pay Twilio directly, zero markup.
- * Version:           1.0.11
+ * Version:           1.1.0
  * Author:            Tillpress
  * Author URI:        https://tillpress.com
  * Requires at least: 6.2
  * Requires PHP:      7.4
  * WC requires at least: 7.0
+ * WC tested up to:  11.2
+ * Requires Plugins:  woocommerce
  * Text Domain:       orderring-lite
  * Domain Path:       /languages
  * License:           GPLv2 or later
@@ -19,7 +21,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'ORLT_VERSION', '1.0.11' );
+define( 'ORLT_VERSION', '1.1.0' );
 define( 'ORLT_BRAND_NAME', 'OrderRing Lite' );
 define( 'ORLT_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ORLT_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
@@ -27,6 +29,7 @@ define( 'ORLT_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
 define( 'ORLT_PLUGIN_FILE', __FILE__ );
 
 require_once ORLT_PLUGIN_DIR . 'includes/class-orlt-caps.php';
+require_once ORLT_PLUGIN_DIR . 'includes/class-orlt-compliance.php';
 require_once ORLT_PLUGIN_DIR . 'includes/class-orlt-logger.php';
 require_once ORLT_PLUGIN_DIR . 'includes/class-orlt-twilio.php';
 require_once ORLT_PLUGIN_DIR . 'includes/class-orlt-webhooks.php';
@@ -53,6 +56,7 @@ final class ORLT_Plugin {
 
 	private function __construct() {
 		register_activation_hook( ORLT_PLUGIN_FILE, array( $this, 'activate' ) );
+		register_deactivation_hook( ORLT_PLUGIN_FILE, array( $this, 'deactivate' ) );
 		add_action( 'before_woocommerce_init', array( $this, 'declare_compatibility' ) );
 		add_action( 'plugins_loaded', array( $this, 'init' ), 20 );
 	}
@@ -62,6 +66,13 @@ final class ORLT_Plugin {
 			\Automattic\WooCommerce\Utilities\FeaturesUtil::declare_compatibility( 'custom_order_tables', ORLT_PLUGIN_FILE, true );
 			\Automattic\WooCommerce\Utilities\FeaturesUtil::declare_compatibility( 'cart_checkout_blocks', ORLT_PLUGIN_FILE, true );
 		}
+	}
+
+	/**
+	 * Drop texts still waiting for quiet hours to end; nothing should fire while switched off.
+	 */
+	public function deactivate() {
+		wp_unschedule_hook( ORLT_Auto::QUIET_HOOK );
 	}
 
 	public function activate() {
@@ -234,7 +245,7 @@ final class ORLT_Plugin {
 			return;
 		}
 		echo '<div class="notice notice-info"><p>';
-		echo esc_html__( 'OrderRing Pro is licensed and sending, so OrderRing Lite is idle. You can deactivate Lite — Pro already includes these SMS tools.', 'orderring-lite' );
+		echo esc_html__( 'OrderRing Pro is active (licensed or on its free trial) and sending, so OrderRing Lite is idle. You can deactivate Lite — Pro already includes these SMS tools.', 'orderring-lite' );
 		echo '</p></div>';
 	}
 

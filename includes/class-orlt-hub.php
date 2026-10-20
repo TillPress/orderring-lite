@@ -315,7 +315,7 @@ class ORLT_Hub {
 		if ( self::should_show_offer( (bool) get_user_meta( get_current_user_id(), self::OFFER_META, true ) ) ) {
 			echo '<section class="orlt-hub-card orlt-hub-offer"><h2>' . esc_html__( 'OrderRing Pro: 20% off for OrderRing Lite users', 'orderring-lite' ) . '</h2>';
 			echo '<p>' . esc_html__( 'Adds two-way SMS chat on the order, voice calls, WhatsApp, bulk pickup reminders, and more message templates.', 'orderring-lite' ) . '</p>';
-			echo '<p>' . esc_html__( 'Price: $69/year (or $9 for one month). Enter this code at checkout on tillpress.com for 20% off a yearly license:', 'orderring-lite' ) . ' <code class="orlt-hub-code">' . esc_html( self::OFFER_CODE ) . '</code></p>';
+			echo '<p>' . esc_html__( 'Enter this code at checkout on tillpress.com for 20% off a yearly license:', 'orderring-lite' ) . ' <code class="orlt-hub-code">' . esc_html( self::OFFER_CODE ) . '</code></p>';
 			echo '<p class="orlt-hub-actions"><a class="button button-primary" href="' . esc_url( self::PRO_URL ) . '" target="_blank" rel="noopener noreferrer">' . esc_html__( 'See OrderRing Pro', 'orderring-lite' ) . '</a> ';
 			$this->action_button( 'orlt_offer_dismiss', __( 'Hide this offer', 'orderring-lite' ), 'button-link' );
 			echo '</p>';

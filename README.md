@@ -19,14 +19,9 @@ Twilio and related logos are trademarks of Twilio Inc. or its affiliates. OrderR
 
 ## Install
 
-**Use the Release zip, not GitHub’s “Source code” download.** WordPress needs a folder named `orderring-lite`. The source zip is named `orderring-lite-main` and will not activate cleanly.
+Easiest: in wp-admin go to **Plugins → Add New**, search for **OrderRing Lite**, then install and activate. It is listed at [wordpress.org/plugins/orderring-lite](https://wordpress.org/plugins/orderring-lite/). WooCommerce must already be active. Then open **OrderRing Lite** in the admin menu.
 
-1. Download `orderring-lite-1.0.6.zip` from [Releases](https://github.com/TillPress/orderring-lite/releases/latest).
-2. In wp-admin: **Plugins → Add New → Upload Plugin**.
-3. Activate. WooCommerce must already be active.
-4. Open **OrderRing Lite** in the admin menu.
-
-Also on [wordpress.org/plugins/orderring-lite](https://wordpress.org/plugins/orderring-lite/).
+Installing from this repo instead? WordPress needs a folder named `orderring-lite`, and GitHub’s “Source code” zip is named `orderring-lite-main`, so rename the folder before uploading it (or use the wordpress.org zip).
 
 Requirements: WordPress 6.2+, PHP 7.4+, WooCommerce 7.0+.
 
@@ -116,7 +111,7 @@ Lite steps aside so you do not send duplicate SMS. While both are active, Lite s
 
 ### Can I install from this GitHub repo with “Download ZIP”?
 
-No. Use the **Release** asset (`orderring-lite-1.0.6.zip`). GitHub’s source zip has the wrong folder name.
+Only if you rename the unzipped folder to `orderring-lite` first. The simpler route is installing from wordpress.org.
 
 ### Where do I get help?
 

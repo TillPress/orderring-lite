@@ -109,6 +109,9 @@ class ORLT_Admin {
 			'orlt_help_reply'               => 'sanitize_textarea_field',
 			'orlt_start_reply'              => 'sanitize_textarea_field',
 			'orlt_sms_footer_text'          => 'sanitize_text_field',
+			'orlt_quiet_hours_start'        => array( $this, 'sanitize_time' ),
+			'orlt_quiet_hours_end'          => array( $this, 'sanitize_time' ),
+			'orlt_plain_optout_mode'        => array( 'ORLT_Compliance', 'sanitize_plain_optout_mode' ),
 		);
 		foreach ( $plain as $key => $cb ) {
 			register_setting(
@@ -120,7 +123,7 @@ class ORLT_Admin {
 				)
 			);
 		}
-		foreach ( array( 'orlt_auto_ready_enabled', 'orlt_auto_ready_sms', 'orlt_ready_require_local_pickup', 'orlt_require_sms_consent', 'orlt_checkout_consent_enabled', 'orlt_checkout_consent_required', 'orlt_sms_footer_enabled' ) as $box ) {
+		foreach ( array( 'orlt_auto_ready_enabled', 'orlt_auto_ready_sms', 'orlt_ready_require_local_pickup', 'orlt_require_sms_consent', 'orlt_checkout_consent_enabled', 'orlt_checkout_consent_required', 'orlt_sms_footer_enabled', 'orlt_quiet_hours_enabled' ) as $box ) {
 			register_setting(
 				'orlt_settings',
 				$box,
@@ -130,6 +133,15 @@ class ORLT_Admin {
 				)
 			);
 		}
+	}
+
+	/**
+	 * @param mixed $value HH:MM from a time input.
+	 * @return string
+	 */
+	public function sanitize_time( $value ) {
+		$value = trim( sanitize_text_field( (string) $value ) );
+		return null === ORLT_Compliance::minutes( $value ) ? '' : $value;
 	}
 
 	public function sanitize_checkbox( $value ) {
@@ -285,6 +297,17 @@ class ORLT_Admin {
 							<p class="description"><?php echo esc_html__( 'Tags: {customer_first_name} {order_number} {store_name} {phone}', 'orderring-lite' ); ?></p>
 						</td>
 					</tr>
+					<tr>
+						<th scope="row"><?php echo esc_html__( 'Quiet hours', 'orderring-lite' ); ?></th>
+						<td>
+							<label><input type="checkbox" name="orlt_quiet_hours_enabled" value="1" <?php checked( (int) get_option( 'orlt_quiet_hours_enabled', 0 ), 1 ); ?> /> <?php echo esc_html__( 'Hold texts during quiet hours', 'orderring-lite' ); ?></label>
+							<p>
+								<label><?php echo esc_html__( 'From', 'orderring-lite' ); ?> <input type="time" name="orlt_quiet_hours_start" value="<?php echo esc_attr( ORLT_Auto::time_option( 'orlt_quiet_hours_start', '21:00' ) ); ?>" /></label>
+								<label><?php echo esc_html__( 'until', 'orderring-lite' ); ?> <input type="time" name="orlt_quiet_hours_end" value="<?php echo esc_attr( ORLT_Auto::time_option( 'orlt_quiet_hours_end', '08:00' ) ); ?>" /></label>
+							</p>
+							<p class="description"><?php echo esc_html__( "Uses the customer's time zone, worked out from the billing country and state, and the store's time zone when it cannot tell. A held text goes out when quiet hours end.", 'orderring-lite' ); ?></p>
+						</td>
+					</tr>
 				</table>
 
 				<h2><?php echo esc_html__( 'SMS consent', 'orderring-lite' ); ?></h2>
@@ -311,6 +334,14 @@ class ORLT_Admin {
 					<tr>
 						<th scope="row"><label for="orlt_stop_reply"><?php echo esc_html__( 'STOP reply', 'orderring-lite' ); ?></label></th>
 						<td><textarea class="large-text" rows="2" id="orlt_stop_reply" name="orlt_stop_reply"><?php echo esc_textarea( (string) get_option( 'orlt_stop_reply', '' ) ); ?></textarea></td>
+					</tr>
+					<tr>
+						<th scope="row"><?php echo esc_html__( 'Plain-language opt-outs', 'orderring-lite' ); ?></th>
+						<td>
+							<label><input type="radio" name="orlt_plain_optout_mode" value="auto" <?php checked( ORLT_Compliance::plain_optout_mode(), 'auto' ); ?> /> <?php echo esc_html__( 'Treat them as STOP (recommended)', 'orderring-lite' ); ?></label><br />
+							<label><input type="radio" name="orlt_plain_optout_mode" value="flag" <?php checked( ORLT_Compliance::plain_optout_mode(), 'flag' ); ?> /> <?php echo esc_html__( 'Only add an order note', 'orderring-lite' ); ?></label>
+							<p class="description"><?php echo esc_html__( 'Replies such as "please stop texting me" or "wrong number". STOP, STOPALL, UNSUBSCRIBE, CANCEL, END, QUIT, REVOKE and OPT OUT always opt the customer out, as US rules require.', 'orderring-lite' ); ?></p>
+						</td>
 					</tr>
 					<tr>
 						<th scope="row"><label for="orlt_start_reply"><?php echo esc_html__( 'START reply', 'orderring-lite' ); ?></label></th>
@@ -366,6 +397,9 @@ class ORLT_Admin {
 			'toc_help_reply'                 => 'orlt_help_reply',
 			'toc_webhook_base_url'           => 'orlt_webhook_base_url',
 			'toc_pickup_match'               => 'orlt_pickup_match',
+			'toc_quiet_hours_start'          => 'orlt_quiet_hours_start',
+			'toc_quiet_hours_end'            => 'orlt_quiet_hours_end',
+			'toc_plain_optout_mode'          => 'orlt_plain_optout_mode',
 		);
 	}
 

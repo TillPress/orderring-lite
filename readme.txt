@@ -4,7 +4,7 @@ Tags: woocommerce, sms, twilio, pickup, notifications
 Requires at least: 6.2
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 1.0.11
+Stable tag: 1.1.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 WC requires at least: 7.0
@@ -18,7 +18,8 @@ OrderRing Lite texts customers when an order is ready for pickup, using **your**
 * Send SMS from the order screen
 * Auto SMS when an order enters **Ready for Pickup** (or any status you map)
 * Checkout consent checkbox (classic + block checkout)
-* STOP / HELP / START keyword handling
+* STOP / HELP / START keyword handling, with every US FCC opt-out word (STOP, QUIT, END, REVOKE, OPT OUT, CANCEL, UNSUBSCRIBE) and plain-language replies like "please stop texting me"
+* Optional quiet hours in the customer's own time zone: the pickup text waits until morning where the customer is
 * Optional Local Pickup filter
 * Compatible with WooCommerce HPOS
 * Help & demo page: one-click demo order, the exact pickup text a customer would get, and a support ticket form
@@ -107,6 +108,11 @@ Yes. Define `ORLT_ACCOUNT_SID`, `ORLT_AUTH_TOKEN`, and/or `ORLT_FROM_NUMBER` (th
 == Changelog ==
 
 
+
+= 1.1.0 =
+* New: REVOKE and OPT OUT now opt a customer out, alongside STOP, STOPALL, UNSUBSCRIBE, CANCEL, END and QUIT, as US FCC rules require.
+* New: plain-language opt-outs such as "please stop texting me", "remove me from your list" or "wrong number" are treated as STOP. You can switch this to only add an order note. Order questions like "can I cancel my order?" are not matched.
+* New: optional quiet hours (off by default). The ready-for-pickup text waits until quiet hours end in the customer's time zone, worked out from the billing country and state, or the store's time zone when the address does not say.
 = 1.0.11 =
 * Fix: merge tags in the pickup text are filled in once, so a customer name that looks like a tag is not expanded.
 * Fix: a repeated Twilio webhook for the same inbound message is ignored even after 24 hours.
@@ -157,6 +163,9 @@ Yes. Define `ORLT_ACCOUNT_SID`, `ORLT_AUTH_TOKEN`, and/or `ORLT_FROM_NUMBER` (th
 * First public release: Ready-for-pickup SMS, checkout consent, STOP/HELP/START
 
 == Upgrade Notice ==
+
+= 1.1.0 =
+Honors every FCC opt-out word and plain-language opt-out replies, and adds optional quiet hours in the customer's time zone.
 
 = 1.0.7 =
 Adds a Help & demo page: demo order, in-plugin support tickets, and system report. No settings change.
