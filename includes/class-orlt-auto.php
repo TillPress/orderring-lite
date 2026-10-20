@@ -4,11 +4,15 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 /**
- * Ready-for-pickup auto SMS only. No voice, no shipped, no quiet-hours deferral.
+ * Ready-for-pickup auto SMS only. No voice, no shipped. Optional quiet hours in the
+ * customer's time zone hold the text until morning.
  */
 class ORLT_Auto {
 
 	const KIND_READY = 'ready_for_pickup';
+
+	/** Cron hook that sends a text held back by quiet hours. */
+	const QUIET_HOOK = 'orlt_send_after_quiet_hours';
 
 	private static $instance = null;
 
@@ -21,6 +25,68 @@ class ORLT_Auto {
 
 	private function __construct() {
 		add_action( 'woocommerce_order_status_changed', array( $this, 'on_status_changed' ), 25, 4 );
+		add_action( self::QUIET_HOOK, array( $this, 'run_after_quiet_hours' ), 10, 1 );
+	}
+
+	/**
+	 * Quiet window as a list for ORLT_Compliance (empty when switched off).
+	 *
+	 * @return array[]
+	 */
+	public static function quiet_windows() {
+		if ( ! (int) get_option( 'orlt_quiet_hours_enabled', 0 ) ) {
+			return array();
+		}
+		return array(
+			array(
+				self::time_option( 'orlt_quiet_hours_start', '21:00' ),
+				self::time_option( 'orlt_quiet_hours_end', '08:00' ),
+			),
+		);
+	}
+
+	/**
+	 * @param string $option   Option name.
+	 * @param string $fallback HH:MM.
+	 * @return string HH:MM
+	 */
+	public static function time_option( $option, $fallback ) {
+		$value = get_option( $option, $fallback );
+		return null === ORLT_Compliance::minutes( $value ) ? $fallback : trim( (string) $value );
+	}
+
+	/**
+	 * When the order's text may go out: now, or the end of quiet hours in the customer's
+	 * time zone (the store's when the billing address does not say).
+	 *
+	 * @param object   $order WC_Order.
+	 * @param int|null $now   UTC epoch.
+	 * @return int
+	 */
+	public static function send_at( $order, $now = null ) {
+		$now     = $now ? (int) $now : time();
+		$windows = self::quiet_windows();
+		if ( ! $windows ) {
+			return $now;
+		}
+		$loc   = ORLT_Compliance::order_location( $order );
+		$zones = ORLT_Compliance::recipient_zones( $loc['country'], $loc['state'], wp_timezone()->getName() );
+		return ORLT_Compliance::next_open_at( $now, $windows, $zones );
+	}
+
+	/**
+	 * Cron: send a text that quiet hours held back.
+	 *
+	 * @param int $order_id Order ID.
+	 */
+	public function run_after_quiet_hours( $order_id ) {
+		$order_id = absint( $order_id );
+		$order    = $order_id ? wc_get_order( $order_id ) : null;
+		if ( $order ) {
+			$order->delete_meta_data( '_orlt_quiet_until' );
+			$order->save();
+			$this->process_order( $order_id );
+		}
 	}
 
 	public static function is_local_pickup( $order ) {
@@ -107,6 +173,28 @@ class ORLT_Auto {
 			$order->add_order_note( __( 'OrderRing Lite: Ready-for-pickup SMS skipped (no phone number).', 'orderring-lite' ) );
 			$order->update_meta_data( '_orlt_notified_ready_for_pickup_at', time() );
 			$order->save();
+			return;
+		}
+
+		// Only hold a text that would go out; otherwise send_sms() below records why it did not.
+		$check    = ORLT_Twilio::instance();
+		$sendable = ! $check->phone_is_opted_out( $phone )
+			&& ( ! (int) get_option( 'orlt_require_sms_consent', 1 ) || $check->consent_for_order( $order ) );
+		$when     = $sendable ? self::send_at( $order ) : time();
+		if ( $when > time() ) {
+			if ( (int) $order->get_meta( '_orlt_quiet_until' ) !== $when ) {
+				wp_clear_scheduled_hook( self::QUIET_HOOK, array( $order_id ) );
+				wp_schedule_single_event( $when, self::QUIET_HOOK, array( $order_id ) );
+				$order->update_meta_data( '_orlt_quiet_until', $when );
+				$order->add_order_note(
+					sprintf(
+						/* translators: %s: date and time the text will be sent, store time */
+						__( 'OrderRing Lite: Ready-for-pickup SMS held for quiet hours in the customer\'s time zone. It will be sent %s (store time).', 'orderring-lite' ),
+						wp_date( 'M j, Y g:i a', $when )
+					)
+				);
+				$order->save();
+			}
 			return;
 		}
 

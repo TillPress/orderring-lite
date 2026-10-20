@@ -299,16 +299,16 @@ class ORLT_Webhooks {
 			)
 		);
 
+		// STOP-type words always opt out. A plain-language request ("please stop texting me")
+		// is treated as STOP too, unless the store chose to only flag it.
 		$reply   = '';
-		$norm    = preg_replace( '/\s+/', ' ', strtoupper( trim( $body ) ) );
-		$keyword = preg_replace( '/[^A-Z]/', '', $norm );
+		$verdict = ORLT_Compliance::classify_inbound( $body );
+		$plain   = 'possible_stop' === $verdict;
+		if ( $plain && 'auto' === ORLT_Compliance::plain_optout_mode() ) {
+			$verdict = 'stop';
+		}
 
-		$stop_words = array( 'STOP', 'STOPALL', 'UNSUBSCRIBE', 'CANCEL', 'END', 'QUIT' );
-		$help_words = array( 'HELP', 'INFO' );
-		// START / UNSTOP only — do not treat bare YES as re-subscribe (too easy to match casual replies).
-		$start_words = array( 'START', 'UNSTOP' );
-
-		if ( in_array( $keyword, $stop_words, true ) ) {
+		if ( 'stop' === $verdict ) {
 			$twilio->set_sms_consent( $order_id, false, $from );
 			$reply = get_option(
 				'orlt_stop_reply',
@@ -317,10 +317,15 @@ class ORLT_Webhooks {
 			if ( $order_id ) {
 				$order = wc_get_order( $order_id );
 				if ( $order ) {
-					$order->add_order_note( __( 'Customer opted out of SMS (STOP).', 'orderring-lite' ) );
+					$order->add_order_note(
+						$plain
+							/* translators: %s: customer's message, shortened */
+							? sprintf( __( 'Customer opted out of SMS with a plain-language reply: "%s".', 'orderring-lite' ), wp_trim_words( $body, 20 ) )
+							: __( 'Customer opted out of SMS (STOP).', 'orderring-lite' )
+					);
 				}
 			}
-		} elseif ( in_array( $keyword, $help_words, true ) ) {
+		} elseif ( 'help' === $verdict ) {
 			$store = wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES );
 			$saved = get_option( 'orlt_help_reply', '' );
 			$reply = ( is_string( $saved ) && $saved !== '' )
@@ -330,7 +335,7 @@ class ORLT_Webhooks {
 					__( '%s: For help, reply to this number or contact the store. Reply STOP to opt out of SMS.', 'orderring-lite' ),
 					$store
 				);
-		} elseif ( in_array( $keyword, $start_words, true ) ) {
+		} elseif ( 'start' === $verdict ) {
 			$twilio->remove_opt_out( $from );
 			if ( $order_id ) {
 				$twilio->set_sms_consent( $order_id, true, $from );
@@ -351,11 +356,17 @@ class ORLT_Webhooks {
 				$order = wc_get_order( $order_id );
 				if ( $order ) {
 					$order->add_order_note(
-						sprintf(
-							/* translators: %s: trimmed inbound SMS body */
-							__( 'Incoming SMS: "%s"', 'orderring-lite' ),
-							wp_trim_words( $body, 20 )
-						)
+						$plain
+							? sprintf(
+								/* translators: %s: trimmed inbound SMS body */
+								__( 'Possible SMS opt-out: "%s". The customer may be asking to stop texts; if so, do not text them again until they reply START.', 'orderring-lite' ),
+								wp_trim_words( $body, 20 )
+							)
+							: sprintf(
+								/* translators: %s: trimmed inbound SMS body */
+								__( 'Incoming SMS: "%s"', 'orderring-lite' ),
+								wp_trim_words( $body, 20 )
+							)
 					);
 				}
 			}

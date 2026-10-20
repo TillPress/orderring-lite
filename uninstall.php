@@ -34,6 +34,10 @@ $orlt_options = array(
 	'orlt_start_reply',
 	'orlt_sms_footer_enabled',
 	'orlt_sms_footer_text',
+	'orlt_quiet_hours_enabled',
+	'orlt_quiet_hours_start',
+	'orlt_quiet_hours_end',
+	'orlt_plain_optout_mode',
 	'orlt_caps_seeded',
 	'orlt_installed_at',
 	'orlt_review_nudge_dismissed',
@@ -73,13 +77,12 @@ global $wpdb;
 if ( isset( $wpdb ) ) {
 	// phpcs:ignore WordPress.DB.DirectDatabaseQuery
 	$wpdb->query( 'DROP TABLE IF EXISTS ' . $wpdb->prefix . 'orlt_communications' );
-	// phpcs:ignore WordPress.DB.DirectDatabaseQuery
-	$wpdb->query( 'DROP TABLE IF EXISTS ' . $wpdb->prefix . 'orlt_sms_opt_outs' );
-	// Legacy tables (installs that pre-date 1.0.5 and never ran the migration).
+	// Legacy table (installs that pre-date 1.0.5 and never ran the migration).
 	// phpcs:ignore WordPress.DB.DirectDatabaseQuery
 	$wpdb->query( 'DROP TABLE IF EXISTS ' . $wpdb->prefix . 'orl_communications' );
-	// phpcs:ignore WordPress.DB.DirectDatabaseQuery
-	$wpdb->query( 'DROP TABLE IF EXISTS ' . $wpdb->prefix . 'orl_sms_opt_outs' );
+	// orlt_sms_opt_outs and the legacy orl_sms_opt_outs are deliberately kept: they are the
+	// STOP suppression list. Dropping them would let a reinstall (Lite or Pro) text numbers
+	// that replied STOP. OrderRing Pro keeps its own list on uninstall for the same reason.
 }
 
 foreach ( array( 'administrator', 'shop_manager', 'editor', 'author', 'contributor', 'subscriber' ) as $orlt_role_key ) {
