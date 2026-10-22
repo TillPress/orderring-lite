@@ -496,7 +496,9 @@ class ORLT_Logger {
 	}
 
 	public function normalize_phone( $phone, $country_iso = '' ) {
-		$phone = preg_replace( '/[^0-9+]/', '', (string) $phone );
+		// Drop a trailing extension ("ext 5", "x12", "#3") so its digits are not dialled.
+		$phone = preg_replace( '/\s*(?:ext\.?|extension|x|#)\s*\d{1,6}\s*$/i', '', trim( (string) $phone ) );
+		$phone = preg_replace( '/[^0-9+]/', '', $phone );
 		if ( $phone === '' || $phone === '+' ) {
 			return '';
 		}
@@ -514,14 +516,31 @@ class ORLT_Logger {
 
 		if ( strpos( $phone, '0' ) === 0 ) {
 			$national = ltrim( $phone, '0' );
-			return '' === $national ? '' : '+' . $cc . $national;
+			$out = '' === $national ? '' : '+' . $cc . $national;
+			return $this->nanp_guard( $cc, $out );
 		}
 
 		if ( strpos( $phone, $cc ) === 0 && strlen( $phone ) >= strlen( $cc ) + 7 ) {
-			return '+' . $phone;
+			return $this->nanp_guard( $cc, '+' . $phone );
 		}
 
-		return '+' . $cc . $phone;
+		return $this->nanp_guard( $cc, '+' . $cc . $phone );
+	}
+
+	/**
+	 * A number completed with +1 must be a real North American number (ten digits, area code
+	 * starting with 2-9). Anything else, e.g. a German 0151 number on a US order,
+	 * would go to the wrong person, so it is treated as missing.
+	 *
+	 * @param string $cc  Calling code that was added.
+	 * @param string $out Completed number.
+	 * @return string
+	 */
+	private function nanp_guard( $cc, $out ) {
+		if ( '1' === (string) $cc && '' !== $out && ! preg_match( '/^\+1[2-9]\d{9}$/', $out ) ) {
+			return '';
+		}
+		return $out;
 	}
 
 	public function default_country_code() {

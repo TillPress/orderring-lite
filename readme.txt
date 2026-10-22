@@ -4,7 +4,7 @@ Tags: woocommerce, sms, twilio, pickup, notifications
 Requires at least: 6.2
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 1.1.0
+Stable tag: 1.1.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 WC requires at least: 7.0
@@ -93,7 +93,7 @@ Open **OrderRing Lite → Help & demo**. The support form there sends your ticke
 Yes. On **OrderRing Lite → Help & demo**, click **Create demo data**. It creates one order in Ready for Pickup with Local Pickup and SMS consent, so you can see the order-screen SMS box, the consent badge, and the exact text your customer would receive. Demo orders can never be texted, even if you press Send. Everything is labelled "Demo", never emailed or texted, and removed with one click (or when you uninstall the plugin).
 
 = Does the plugin advertise anything? =
-Only on its own Help & demo page: one box describing the paid OrderRing plugin with an optional 20% discount code. It can be hidden for good with "Hide this offer". There are no dashboard-wide notices, no tracking, and no referral IDs.
+Only on its own screens. The settings page has a short box listing what the paid OrderRing plugin adds, and the Help & demo page has one box with an optional 20% discount code that can be hidden for good with "Hide this offer". After 14 days and 10 sent texts, OrderRing Lite's own screens ask once for a review, which you can dismiss. There are no dashboard-wide notices, no tracking, and no referral IDs.
 
 = Can I set credentials in wp-config.php? =
 Yes. Define `ORLT_ACCOUNT_SID`, `ORLT_AUTH_TOKEN`, and/or `ORLT_FROM_NUMBER` (the older `ORL_` names still work). Constants override the settings fields so credentials can stay out of the database.
@@ -108,6 +108,14 @@ Yes. Define `ORLT_ACCOUNT_SID`, `ORLT_AUTH_TOKEN`, and/or `ORLT_FROM_NUMBER` (th
 == Changelog ==
 
 
+
+
+= 1.1.1 =
+* Fix: {order_total} no longer shows "&#36;" instead of "$" in texts.
+* Fix: a phone extension such as "ext 5" is dropped instead of being dialled, and a national number with a leading 0 on a US store is no longer turned into a wrong +1 number.
+* Fix: the settings page now shows "Settings saved" and error messages, and the From number and invalid-phone messages are in plain language.
+* Fix: the order note for a manual text shows the message that was sent, not the raw {tags}.
+* The settings page lists every tag you can use, and the review request only shows on OrderRing Lite screens.
 
 = 1.1.0 =
 * New: REVOKE and OPT OUT now opt a customer out, alongside STOP, STOPALL, UNSUBSCRIBE, CANCEL, END and QUIT, as US FCC rules require.

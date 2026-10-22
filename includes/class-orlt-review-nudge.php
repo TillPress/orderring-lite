@@ -173,6 +173,11 @@ class ORLT_Review_Nudge {
 		if ( ! current_user_can( 'manage_options' ) ) {
 			return;
 		}
+		// Only on OrderRing Lite's own screens, never dashboard-wide.
+		$screen = function_exists( 'get_current_screen' ) ? get_current_screen() : null;
+		if ( ! $screen || false === strpos( (string) $screen->id, 'orderring-lite' ) ) {
+			return;
+		}
 		self::maybe_store_install_time();
 		$dismissed    = (int) get_option( self::OPTION_DISMISSED, 0 );
 		$installed_at = (int) get_option( self::OPTION_INSTALLED_AT, 0 );

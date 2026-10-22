@@ -151,7 +151,7 @@ class ORLT_Admin {
 	public function sanitize_from_number( $value ) {
 		$value = preg_replace( '/\s+/', '', (string) $value );
 		if ( $value !== '' && ! ORLT_Twilio::is_e164( $value ) ) {
-			add_settings_error( 'orlt_from_number', 'orlt_from', __( 'From Number must be E.164 (e.g. +15055551234).', 'orderring-lite' ) );
+			add_settings_error( 'orlt_from_number', 'orlt_from', __( 'From Number was not saved: enter your Twilio number with + and the country code, for example +15095551234.', 'orderring-lite' ) );
 			return (string) get_option( 'orlt_from_number', '' );
 		}
 		return $value;
@@ -206,6 +206,7 @@ class ORLT_Admin {
 		?>
 		<div class="wrap orlt-wrap">
 			<h1><?php echo esc_html__( 'OrderRing Lite', 'orderring-lite' ); ?></h1>
+			<?php settings_errors(); // Top-level menu pages don't show the saved/error notices on their own. ?>
 			<p class="description"><?php echo esc_html__( 'Ready-for-pickup SMS via your own Twilio account. You pay Twilio directly, zero markup.', 'orderring-lite' ); ?></p>
 
 			<div class="orlt-upgrade">
@@ -294,7 +295,7 @@ class ORLT_Admin {
 						<th scope="row"><label for="orlt_message_ready_for_pickup"><?php echo esc_html__( 'Message', 'orderring-lite' ); ?></label></th>
 						<td>
 							<textarea class="large-text" rows="4" id="orlt_message_ready_for_pickup" name="orlt_message_ready_for_pickup"><?php echo esc_textarea( (string) get_option( 'orlt_message_ready_for_pickup', '' ) ); ?></textarea>
-							<p class="description"><?php echo esc_html__( 'Tags: {customer_first_name} {order_number} {store_name} {phone}', 'orderring-lite' ); ?></p>
+							<p class="description"><?php echo esc_html__( 'Tags: {customer_first_name} {customer_last_name} {customer_full_name} {order_number} {order_total} {store_name} {phone} {tracking_url}', 'orderring-lite' ); ?></p>
 						</td>
 					</tr>
 					<tr>

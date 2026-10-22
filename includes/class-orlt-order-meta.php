@@ -125,7 +125,7 @@ class ORLT_Order_Meta {
 			sprintf(
 				/* translators: %s: message body */
 				__( 'SMS sent: "%s"', 'orderring-lite' ),
-				$body
+				isset( $result['body'] ) ? (string) $result['body'] : $body
 			) . ( $force ? ' ' . __( '(forced)', 'orderring-lite' ) : '' )
 		);
 

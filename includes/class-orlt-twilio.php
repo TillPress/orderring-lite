@@ -265,7 +265,7 @@ class ORLT_Twilio {
 			$replacements['{customer_last_name}']  = (string) $order->get_billing_last_name();
 			$replacements['{customer_full_name}']  = trim( $order->get_formatted_billing_full_name() );
 			$replacements['{phone}']               = (string) $order->get_billing_phone();
-			$replacements['{order_total}']         = wp_strip_all_tags( $order->get_formatted_order_total() );
+			$replacements['{order_total}']         = str_replace( "\xC2\xA0", " ", html_entity_decode( wp_strip_all_tags( $order->get_formatted_order_total() ), ENT_QUOTES | ENT_HTML5, 'UTF-8' ) );
 			$replacements['{billing_email}']       = (string) $order->get_billing_email();
 
 			$tracking                       = $this->tracking_for( $order );
@@ -535,7 +535,7 @@ class ORLT_Twilio {
 		if ( empty( $to ) || ! self::is_e164( $to ) ) {
 			return array(
 				'success' => false,
-				'error'   => __( 'Invalid phone number (must be E.164, e.g. +15055551234).', 'orderring-lite' ),
+				'error'   => __( 'The phone number is incomplete or invalid. It needs the country code, for example +15095551234.', 'orderring-lite' ),
 			);
 		}
 
@@ -611,6 +611,7 @@ class ORLT_Twilio {
 			'success' => true,
 			'sid'     => $data['sid'],
 			'status'  => $data['status'] ?? 'queued',
+			'body'    => $body,
 		);
 	}
 
