@@ -3,7 +3,7 @@
  * Plugin Name:       OrderRing Lite
  * Plugin URI:        https://tillpress.com/lite/
  * Description:       Ready-for-pickup SMS for WooCommerce via your own Twilio account. Checkout consent and STOP/HELP/START included. Bring your own Twilio account — you pay Twilio directly, zero markup.
- * Version:           1.1.1
+ * Version:           1.1.2
  * Author:            Tillpress
  * Author URI:        https://tillpress.com
  * Requires at least: 6.2
@@ -21,7 +21,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'ORLT_VERSION', '1.1.1' );
+define( 'ORLT_VERSION', '1.1.2' );
 define( 'ORLT_BRAND_NAME', 'OrderRing Lite' );
 define( 'ORLT_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ORLT_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
@@ -41,6 +41,7 @@ require_once ORLT_PLUGIN_DIR . 'includes/class-orlt-checkout.php';
 require_once ORLT_PLUGIN_DIR . 'includes/class-orlt-review-nudge.php';
 require_once ORLT_PLUGIN_DIR . 'includes/class-orlt-demo.php';
 require_once ORLT_PLUGIN_DIR . 'includes/class-orlt-support.php';
+require_once ORLT_PLUGIN_DIR . 'includes/class-orlt-skin.php';
 require_once ORLT_PLUGIN_DIR . 'includes/class-orlt-hub.php';
 
 final class ORLT_Plugin {
@@ -231,6 +232,7 @@ final class ORLT_Plugin {
 		ORLT_Review_Nudge::instance();
 		if ( is_admin() ) {
 			ORLT_Support::instance();
+			ORLT_Skin::init();
 			ORLT_Hub::instance();
 		}
 	}

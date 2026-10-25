@@ -4,7 +4,7 @@ Tags: woocommerce, sms, twilio, pickup, notifications
 Requires at least: 6.2
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 1.1.1
+Stable tag: 1.1.2
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 WC requires at least: 7.0
@@ -110,6 +110,9 @@ Yes. Define `ORLT_ACCOUNT_SID`, `ORLT_AUTH_TOKEN`, and/or `ORLT_FROM_NUMBER` (th
 
 
 
+
+= 1.1.2 =
+* Refreshed admin look, shared across Tillpress plugins: rounded cards, pill tabs and buttons, settings forms and tables as cards. Only the plugin's own screens change; no settings or data change.
 = 1.1.1 =
 * Fix: {order_total} no longer shows "&#36;" instead of "$" in texts.
 * Fix: a phone extension such as "ext 5" is dropped instead of being dialled, and a national number with a leading 0 on a US store is no longer turned into a wrong +1 number.
