@@ -38,6 +38,21 @@ $orlt_options = array(
 	'orlt_quiet_hours_start',
 	'orlt_quiet_hours_end',
 	'orlt_plain_optout_mode',
+	'orlt_sms_provider',
+	'orlt_vonage_api_key',
+	'orlt_vonage_api_secret',
+	'orlt_vonage_signature_secret',
+	'orlt_vonage_signature_method',
+	'orlt_vonage_from',
+	'orlt_plivo_auth_id',
+	'orlt_plivo_auth_token',
+	'orlt_plivo_from',
+	'orlt_triggers',
+	'orlt_trigger_admin_phone',
+	'orlt_trigger_rate_ip',
+	'orlt_trigger_rate_number',
+	'orlt_trigger_rate_admin',
+	'orlt_trigger_recent',
 	'orlt_caps_seeded',
 	'orlt_installed_at',
 	'orlt_review_nudge_dismissed',
@@ -73,10 +88,18 @@ foreach ( $orlt_options as $orlt_key ) {
 	delete_option( $orlt_key );
 }
 
+// Texts held back by quiet hours (every job, whatever its arguments).
+wp_unschedule_hook( 'orlt_trigger_deferred' );
+
 global $wpdb;
 if ( isset( $wpdb ) ) {
 	// phpcs:ignore WordPress.DB.DirectDatabaseQuery
 	$wpdb->query( 'DROP TABLE IF EXISTS ' . $wpdb->prefix . 'orlt_communications' );
+	// phpcs:ignore WordPress.DB.DirectDatabaseQuery
+	$wpdb->query( 'DROP TABLE IF EXISTS ' . $wpdb->prefix . 'orlt_consents' );
+	// Trigger rate-limit counters (orlt_trl_<hash>).
+	// phpcs:ignore WordPress.DB.DirectDatabaseQuery
+	$wpdb->query( $wpdb->prepare( "DELETE FROM {$wpdb->options} WHERE option_name LIKE %s OR option_name LIKE %s", $wpdb->esc_like( '_transient_orlt_trl_' ) . '%', $wpdb->esc_like( '_transient_timeout_orlt_trl_' ) . '%' ) );
 	// Legacy table (installs that pre-date 1.0.5 and never ran the migration).
 	// phpcs:ignore WordPress.DB.DirectDatabaseQuery
 	$wpdb->query( 'DROP TABLE IF EXISTS ' . $wpdb->prefix . 'orl_communications' );
@@ -110,4 +133,6 @@ if ( is_array( $orlt_demo ) ) {
 	}
 }
 delete_option( 'orlt_demo_ids' );
+delete_option( 'orlt_consents_db_version' );
+delete_option( 'orlt_log_context_cursor' );
 delete_metadata( 'user', 0, 'orlt_offer_dismissed', '', true );

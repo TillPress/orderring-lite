@@ -19,6 +19,7 @@ class ORLT_Admin {
 		add_action( 'admin_init', array( $this, 'register_settings' ) );
 		add_action( 'admin_enqueue_scripts', array( $this, 'assets' ) );
 		add_action( 'wp_ajax_orlt_test_connection', array( $this, 'ajax_test' ) );
+		add_action( 'wp_ajax_orlt_test_sms', array( $this, 'ajax_test_sms' ) );
 		add_action( 'admin_post_orlt_copy_from_pro', array( $this, 'handle_copy_from_pro' ) );
 		add_action( 'admin_post_orlt_restore_copy_backup', array( $this, 'handle_restore_copy_backup' ) );
 		add_action( 'updated_option', array( $this, 'maybe_recover_deferred' ), 10, 3 );
@@ -98,6 +99,45 @@ class ORLT_Admin {
 				'sanitize_callback' => array( $this, 'sanitize_from_number' ),
 			)
 		);
+		// SMS provider (Twilio default) and Vonage / Plivo credentials.
+		register_setting(
+			'orlt_settings',
+			ORLT_SMS_Providers::OPTION,
+			array(
+				'type'              => 'string',
+				'sanitize_callback' => array( $this, 'sanitize_sms_provider' ),
+				'default'           => ORLT_SMS_Providers::DEFAULT,
+			)
+		);
+		register_setting(
+			'orlt_settings',
+			'orlt_vonage_signature_method',
+			array(
+				'type'              => 'string',
+				'sanitize_callback' => array( $this, 'sanitize_vonage_signature_method' ),
+				'default'           => 'md5hash',
+			)
+		);
+		$provider_fields = array(
+			array( ORLT_SMS_Providers::plain_fields(), false ),
+			array( ORLT_SMS_Providers::secret_fields(), true ),
+		);
+		foreach ( $provider_fields as list( $fields, $secret ) ) {
+			foreach ( $fields as $option => $constant ) {
+				register_setting(
+					'orlt_settings',
+					$option,
+					array(
+						'type'              => 'string',
+						'sanitize_callback' => function ( $value ) use ( $option, $constant, $secret ) {
+							return $this->sanitize_provider_field( $option, $constant, $value, $secret );
+						},
+						'default'           => '',
+					)
+				);
+			}
+		}
+
 		$plain = array(
 			'orlt_webhook_base_url'         => array( $this, 'sanitize_webhook_base' ),
 			'orlt_status_ready_for_pickup'  => array( $this, 'sanitize_order_status' ),
@@ -169,6 +209,74 @@ class ORLT_Admin {
 		return sanitize_text_field( $value );
 	}
 
+	/**
+	 * SMS provider choice. Switching where texts go (and whose webhooks are trusted) is
+	 * administrator-only, like the Twilio Auth Token.
+	 *
+	 * @param mixed $value Raw value.
+	 * @return string twilio|vonage|plivo
+	 */
+	public function sanitize_sms_provider( $value ) {
+		$prev = ORLT_SMS_Providers::active_id();
+		$new  = ORLT_SMS_Providers::normalize_id( $value );
+		if ( $new !== $prev && ! current_user_can( 'manage_options' ) ) {
+			add_settings_error( ORLT_SMS_Providers::OPTION, 'orlt_sms_provider_denied', __( 'Only administrators can change the SMS provider. Your previous choice was kept.', 'orderring-lite' ) );
+			return $prev;
+		}
+		return $new;
+	}
+
+	/**
+	 * @param mixed $value Raw value.
+	 * @return string
+	 */
+	public function sanitize_vonage_signature_method( $value ) {
+		$prev = ORLT_SMS_Vonage::normalize_method( get_option( 'orlt_vonage_signature_method', 'md5hash' ) );
+		$new  = ORLT_SMS_Vonage::normalize_method( $value );
+		if ( $new !== $prev && ! current_user_can( 'manage_options' ) ) {
+			return $prev;
+		}
+		return $new;
+	}
+
+	/**
+	 * Vonage / Plivo credential fields. A wp-config constant locks the field; only
+	 * administrators can change a value; a blank secret keeps the saved one (secrets are
+	 * never printed back into the form); senders must be E.164 or an alphanumeric ID.
+	 *
+	 * @param string $option   Option name.
+	 * @param string $constant wp-config constant that overrides it.
+	 * @param mixed  $value    Raw value.
+	 * @param bool   $secret   Whether this is a secret.
+	 * @return string
+	 */
+	public function sanitize_provider_field( $option, $constant, $value, $secret ) {
+		$prev  = (string) get_option( $option, '' );
+		$value = is_string( $value ) ? trim( $value ) : '';
+		if ( ORLT_SMS_Providers::is_constant( $constant ) ) {
+			return $prev;
+		}
+		if ( $secret && '' === $value ) {
+			return $prev;
+		}
+		if ( $value === $prev ) {
+			return $prev;
+		}
+		if ( ! current_user_can( 'manage_options' ) ) {
+			add_settings_error( $option, $option . '_denied', __( 'Only administrators can change SMS provider credentials. Your previous value was kept.', 'orderring-lite' ) );
+			return $prev;
+		}
+		if ( in_array( $option, array( 'orlt_vonage_from', 'orlt_plivo_from' ), true ) && '' !== $value ) {
+			$sender = ORLT_SMS_Providers::normalize_sender( $value );
+			if ( '' === $sender ) {
+				add_settings_error( $option, $option . '_invalid', __( 'Sender must be an E.164 number (e.g. +15055551234) or an alphanumeric sender ID of up to 11 letters and digits. Your previous value was kept.', 'orderring-lite' ) );
+				return $prev;
+			}
+			return $sender;
+		}
+		return sanitize_text_field( $value );
+	}
+
 	public function sanitize_order_status( $value ) {
 		return ORLT_Statuses::normalize_wc_status( $value, ORLT_Statuses::READY_FOR_PICKUP );
 	}
@@ -197,6 +305,43 @@ class ORLT_Admin {
 		wp_send_json_error( $result );
 	}
 
+	/**
+	 * Send one test text (no order) to a number the admin types in. Works with or
+	 * without WooCommerce; the opt-out list still applies.
+	 */
+	public function ajax_test_sms() {
+		check_ajax_referer( 'orlt_nonce', 'nonce' );
+		if ( ! current_user_can( ORLT_Caps::manage() ) ) {
+			wp_send_json_error( array( 'message' => __( 'Forbidden', 'orderring-lite' ) ), 403 );
+		}
+		$phone = isset( $_POST['phone'] ) ? sanitize_text_field( wp_unslash( $_POST['phone'] ) ) : '';
+		$phone = ORLT_Logger::instance()->normalize_phone( $phone );
+		if ( '' === $phone || ! ORLT_Twilio::is_e164( $phone ) ) {
+			wp_send_json_error( array( 'message' => __( 'Enter a mobile number in E.164 format, for example +15055551234.', 'orderring-lite' ) ) );
+		}
+		$twilio   = ORLT_Twilio::instance();
+		$provider = $twilio->sms_provider();
+		if ( ! $provider->is_configured() ) {
+			wp_send_json_error(
+				array(
+					'message' => 'twilio' === $provider->id()
+						? __( 'Save your Twilio Account SID, Auth Token and From Number first.', 'orderring-lite' )
+						/* translators: %s: SMS provider name */
+						: sprintf( __( 'Save your %s credentials and sender first.', 'orderring-lite' ), $provider->label() ),
+				)
+			);
+		}
+		$site = wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES );
+		/* translators: 1: site name, 2: SMS provider name */
+		$body = sprintf( __( '%1$s: test text from OrderRing Lite. Your %2$s connection works.', 'orderring-lite' ), $site, $provider->label() );
+		$res  = $twilio->send_sms( $phone, $body, 0, true );
+		if ( empty( $res['success'] ) ) {
+			wp_send_json_error( array( 'message' => ! empty( $res['error'] ) ? (string) $res['error'] : __( 'The test text was not sent.', 'orderring-lite' ) ) );
+		}
+		/* translators: %s: phone number */
+		wp_send_json_success( array( 'message' => sprintf( __( 'Test text sent to %s.', 'orderring-lite' ), $phone ) ) );
+	}
+
 	public function render_settings() {
 		if ( ! current_user_can( ORLT_Caps::manage() ) ) {
 			wp_die( esc_html__( 'Forbidden', 'orderring-lite' ) );
@@ -207,7 +352,7 @@ class ORLT_Admin {
 		<div class="wrap orlt-wrap">
 			<h1><?php echo esc_html__( 'OrderRing Lite', 'orderring-lite' ); ?></h1>
 			<?php settings_errors(); // Top-level menu pages don't show the saved/error notices on their own. ?>
-			<p class="description"><?php echo esc_html__( 'Ready-for-pickup SMS via your own Twilio account. You pay Twilio directly, zero markup.', 'orderring-lite' ); ?></p>
+			<p class="description"><?php echo esc_html__( 'Ready-for-pickup SMS via your own Twilio, Vonage or Plivo account. You pay the provider directly, zero markup.', 'orderring-lite' ); ?></p>
 
 			<div class="orlt-upgrade">
 				<p><strong><?php echo esc_html__( 'Need voice calls, WhatsApp, two-way chat, or bulk reminders?', 'orderring-lite' ); ?></strong></p>
@@ -231,46 +376,68 @@ class ORLT_Admin {
 			<form method="post" action="options.php">
 				<?php settings_fields( 'orlt_settings' ); ?>
 
-				<h2><?php echo esc_html__( 'Twilio credentials', 'orderring-lite' ); ?></h2>
-				<p><?php echo esc_html__( 'US A2P 10DLC: register your brand and campaign in the Twilio Console before texting US mobiles. This plugin does not file 10DLC for you.', 'orderring-lite' ); ?></p>
-				<table class="form-table" role="presentation">
-					<tr>
-						<th scope="row"><label for="orlt_account_sid"><?php echo esc_html__( 'Account SID', 'orderring-lite' ); ?></label></th>
-						<td>
-							<?php if ( $twilio->credential_is_constant( 'sid' ) ) : ?>
-								<code><?php echo esc_html__( 'Set in wp-config.php (ORLT_ACCOUNT_SID)', 'orderring-lite' ); ?></code>
-							<?php else : ?>
-								<input type="text" class="regular-text" id="orlt_account_sid" name="orlt_account_sid" value="<?php echo esc_attr( get_option( 'orlt_account_sid', '' ) ); ?>" autocomplete="off" />
-							<?php endif; ?>
-						</td>
-					</tr>
-					<tr>
-						<th scope="row"><label for="orlt_auth_token"><?php echo esc_html__( 'Auth Token', 'orderring-lite' ); ?></label></th>
-						<td>
-							<?php if ( $twilio->credential_is_constant( 'token' ) ) : ?>
-								<code><?php echo esc_html__( 'Set in wp-config.php (ORLT_AUTH_TOKEN)', 'orderring-lite' ); ?></code>
-							<?php else : ?>
-								<input type="password" class="regular-text" id="orlt_auth_token" name="orlt_auth_token" value="" placeholder="<?php echo esc_attr( get_option( 'orlt_auth_token', '' ) ? '••••••••' : '' ); ?>" autocomplete="new-password" />
-								<p class="description"><?php echo esc_html__( 'Leave blank to keep the saved token.', 'orderring-lite' ); ?></p>
-							<?php endif; ?>
-						</td>
-					</tr>
-					<tr>
-						<th scope="row"><label for="orlt_from_number"><?php echo esc_html__( 'From Number', 'orderring-lite' ); ?></label></th>
-						<td>
-							<?php if ( $twilio->credential_is_constant( 'from' ) ) : ?>
-								<code><?php echo esc_html__( 'Set in wp-config.php (ORLT_FROM_NUMBER)', 'orderring-lite' ); ?></code>
-							<?php else : ?>
-								<input type="text" class="regular-text" id="orlt_from_number" name="orlt_from_number" value="<?php echo esc_attr( get_option( 'orlt_from_number', '' ) ); ?>" placeholder="+15055551234" />
-							<?php endif; ?>
-						</td>
-					</tr>
-				</table>
+				<?php $this->render_sms_provider_settings(); ?>
+
+				<div class="orlt-provider-fields" data-provider="twilio">
+					<h2><?php echo esc_html__( 'Twilio credentials', 'orderring-lite' ); ?></h2>
+					<p><?php echo esc_html__( 'US A2P 10DLC: register your brand and campaign in the Twilio Console before texting US mobiles. This plugin does not file 10DLC for you.', 'orderring-lite' ); ?></p>
+					<table class="form-table" role="presentation">
+						<tr>
+							<th scope="row"><label for="orlt_account_sid"><?php echo esc_html__( 'Account SID', 'orderring-lite' ); ?></label></th>
+							<td>
+								<?php if ( $twilio->credential_is_constant( 'sid' ) ) : ?>
+									<code><?php echo esc_html__( 'Set in wp-config.php (ORLT_ACCOUNT_SID)', 'orderring-lite' ); ?></code>
+								<?php else : ?>
+									<input type="text" class="regular-text" id="orlt_account_sid" name="orlt_account_sid" value="<?php echo esc_attr( get_option( 'orlt_account_sid', '' ) ); ?>" autocomplete="off" />
+								<?php endif; ?>
+							</td>
+						</tr>
+						<tr>
+							<th scope="row"><label for="orlt_auth_token"><?php echo esc_html__( 'Auth Token', 'orderring-lite' ); ?></label></th>
+							<td>
+								<?php if ( $twilio->credential_is_constant( 'token' ) ) : ?>
+									<code><?php echo esc_html__( 'Set in wp-config.php (ORLT_AUTH_TOKEN)', 'orderring-lite' ); ?></code>
+								<?php else : ?>
+									<input type="password" class="regular-text" id="orlt_auth_token" name="orlt_auth_token" value="" placeholder="<?php echo esc_attr( get_option( 'orlt_auth_token', '' ) ? '••••••••' : '' ); ?>" autocomplete="new-password" />
+									<p class="description"><?php echo esc_html__( 'Leave blank to keep the saved token.', 'orderring-lite' ); ?></p>
+								<?php endif; ?>
+							</td>
+						</tr>
+						<tr>
+							<th scope="row"><label for="orlt_from_number"><?php echo esc_html__( 'From Number', 'orderring-lite' ); ?></label></th>
+							<td>
+								<?php if ( $twilio->credential_is_constant( 'from' ) ) : ?>
+									<code><?php echo esc_html__( 'Set in wp-config.php (ORLT_FROM_NUMBER)', 'orderring-lite' ); ?></code>
+								<?php else : ?>
+									<input type="text" class="regular-text" id="orlt_from_number" name="orlt_from_number" value="<?php echo esc_attr( get_option( 'orlt_from_number', '' ) ); ?>" placeholder="+15055551234" />
+								<?php endif; ?>
+							</td>
+						</tr>
+					</table>
+					<p>
+						<button type="button" class="button" id="orlt-test-connection"><?php echo esc_html__( 'Test connection', 'orderring-lite' ); ?></button>
+						<span id="orlt-test-msg"></span>
+					</p>
+				</div>
+
+				<?php $this->render_other_provider_fields(); ?>
+
 				<p>
-					<button type="button" class="button" id="orlt-test-connection"><?php echo esc_html__( 'Test connection', 'orderring-lite' ); ?></button>
-					<span id="orlt-test-msg"></span>
+					<label for="orlt-test-sms-phone"><?php echo esc_html__( 'Send a test text to', 'orderring-lite' ); ?></label>
+					<input type="tel" id="orlt-test-sms-phone" class="regular-text" placeholder="+15055551234" autocomplete="off" />
+					<button type="button" class="button" id="orlt-test-sms"><?php echo esc_html__( 'Send test SMS', 'orderring-lite' ); ?></button>
+					<span id="orlt-test-sms-msg"></span>
 				</p>
 
+				<?php
+				// Pickup texts and checkout consent need WooCommerce. Without it the fields stay
+				// in the form (hidden) so saving never wipes them.
+				$orlt_woo = ORLT_Woo::active();
+				if ( ! $orlt_woo ) :
+					?>
+					<div class="notice notice-info inline"><p><?php echo esc_html__( 'WooCommerce is not active, so the pickup text and checkout consent settings are hidden. Texting, opt-outs and STOP/HELP/START work without it.', 'orderring-lite' ); ?></p></div>
+				<?php endif; ?>
+				<div class="orlt-woo-only"<?php echo $orlt_woo ? '' : ' hidden'; ?>>
 				<h2><?php echo esc_html__( 'Ready for Pickup', 'orderring-lite' ); ?></h2>
 				<table class="form-table" role="presentation">
 					<tr>
@@ -326,9 +493,10 @@ class ORLT_Admin {
 						<td><input type="text" class="large-text" id="orlt_checkout_consent_label" name="orlt_checkout_consent_label" value="<?php echo esc_attr( (string) get_option( 'orlt_checkout_consent_label', '' ) ); ?>" /></td>
 					</tr>
 				</table>
+				</div>
 
 				<h2><?php echo esc_html__( 'STOP / HELP / START', 'orderring-lite' ); ?></h2>
-				<p><?php echo esc_html__( 'Paste this Incoming SMS webhook into Twilio:', 'orderring-lite' ); ?>
+				<p class="orlt-provider-fields" data-provider="twilio"><?php echo esc_html__( 'Paste this Incoming SMS webhook into Twilio:', 'orderring-lite' ); ?>
 					<code><?php echo esc_html( $sms_url ); ?></code>
 				</p>
 				<table class="form-table" role="presentation">
@@ -378,6 +546,168 @@ class ORLT_Admin {
 		<?php
 	}
 
+	/**
+	 * SMS provider picker, what works through each provider, and setup warnings.
+	 */
+	private function render_sms_provider_settings() {
+		$active  = ORLT_SMS_Providers::active_id();
+		$choices = ORLT_SMS_Providers::choices();
+		?>
+		<h2 id="orlt-sms-provider"><?php echo esc_html__( 'SMS provider', 'orderring-lite' ); ?></h2>
+		<p class="description"><?php echo esc_html__( 'Choose who sends your texts. Twilio, Vonage and Plivo all send texts and handle STOP / HELP / START replies. You bring your own account and pay the provider directly.', 'orderring-lite' ); ?></p>
+		<?php foreach ( ORLT_SMS_Providers::admin_warnings() as $warning ) : ?>
+			<div class="notice notice-warning inline"><p><?php echo esc_html( $warning ); ?></p></div>
+		<?php endforeach; ?>
+		<table class="form-table" role="presentation">
+			<tr>
+				<th scope="row"><label for="orlt_sms_provider"><?php echo esc_html__( 'Send SMS with', 'orderring-lite' ); ?></label></th>
+				<td>
+					<select id="orlt_sms_provider" name="<?php echo esc_attr( ORLT_SMS_Providers::OPTION ); ?>">
+						<?php foreach ( $choices as $key => $label ) : ?>
+							<option value="<?php echo esc_attr( $key ); ?>" <?php selected( $active, $key ); ?>><?php echo esc_html( $label ); ?></option>
+						<?php endforeach; ?>
+					</select>
+					<p class="description"><?php echo esc_html__( 'Only administrators can change this. Your opt-out list and consent records stay the same when you switch.', 'orderring-lite' ); ?></p>
+					<?php foreach ( array_keys( $choices ) as $key ) : ?>
+						<p class="description orlt-provider-fields" data-provider="<?php echo esc_attr( $key ); ?>">
+							<?php
+							/* translators: 1: SMS provider name, 2: comma-separated features */
+							echo esc_html( sprintf( __( 'Works through %1$s in OrderRing Lite: %2$s.', 'orderring-lite' ), $choices[ $key ], implode( ', ', ORLT_SMS_Providers::capability_labels( $key ) ) ) );
+							?>
+						</p>
+					<?php endforeach; ?>
+				</td>
+			</tr>
+		</table>
+		<?php
+	}
+
+	/**
+	 * Vonage and Plivo credentials and the webhook URLs to paste into their dashboards.
+	 * All fields stay in the form (hidden when another provider is selected), so saving
+	 * never wipes them.
+	 */
+	private function render_other_provider_fields() {
+		?>
+		<div class="orlt-provider-fields" data-provider="vonage">
+			<h2><?php echo esc_html__( 'Vonage', 'orderring-lite' ); ?></h2>
+			<table class="form-table" role="presentation">
+				<?php
+				$this->provider_text_row( 'orlt_vonage_api_key', 'ORLT_VONAGE_API_KEY', __( 'API key', 'orderring-lite' ), '' );
+				$this->provider_secret_row( 'orlt_vonage_api_secret', 'ORLT_VONAGE_API_SECRET', __( 'API secret', 'orderring-lite' ), '' );
+				$this->provider_text_row( 'orlt_vonage_from', 'ORLT_VONAGE_FROM', __( 'From number or sender ID', 'orderring-lite' ), __( 'A Vonage number on your account in E.164 format (e.g. +15055551234), or an alphanumeric sender ID where the destination country allows one. Customers can only reply to a number.', 'orderring-lite' ) );
+				$this->provider_secret_row( 'orlt_vonage_signature_secret', 'ORLT_VONAGE_SIGNATURE_SECRET', __( 'Signature secret', 'orderring-lite' ), __( 'Vonage dashboard → API Settings → Signature secret. Required for incoming replies: unsigned or wrongly signed webhooks are refused, so STOP replies are only processed once this is set. Ask Vonage support to turn on signed webhooks for your account.', 'orderring-lite' ) );
+				?>
+				<tr>
+					<th scope="row"><label for="orlt_vonage_signature_method"><?php echo esc_html__( 'Signature method', 'orderring-lite' ); ?></label></th>
+					<td>
+						<?php $method = ORLT_SMS_Vonage::normalize_method( get_option( 'orlt_vonage_signature_method', 'md5hash' ) ); ?>
+						<select id="orlt_vonage_signature_method" name="orlt_vonage_signature_method">
+							<?php foreach ( array( 'md5hash' => 'MD5 hash', 'md5' => 'MD5 HMAC', 'sha1' => 'SHA-1 HMAC', 'sha256' => 'SHA-256 HMAC', 'sha512' => 'SHA-512 HMAC' ) as $key => $label ) : ?>
+								<option value="<?php echo esc_attr( $key ); ?>" <?php selected( $method, $key ); ?>><?php echo esc_html( $label ); ?></option>
+							<?php endforeach; ?>
+						</select>
+						<p class="description"><?php echo esc_html__( 'Must match the method chosen in your Vonage API Settings. SHA-256 HMAC is recommended.', 'orderring-lite' ); ?></p>
+					</td>
+				</tr>
+			</table>
+			<?php $this->provider_webhook_help( 'vonage' ); ?>
+		</div>
+
+		<div class="orlt-provider-fields" data-provider="plivo">
+			<h2><?php echo esc_html__( 'Plivo', 'orderring-lite' ); ?></h2>
+			<table class="form-table" role="presentation">
+				<?php
+				$this->provider_text_row( 'orlt_plivo_auth_id', 'ORLT_PLIVO_AUTH_ID', __( 'Auth ID', 'orderring-lite' ), '' );
+				$this->provider_secret_row( 'orlt_plivo_auth_token', 'ORLT_PLIVO_AUTH_TOKEN', __( 'Auth Token', 'orderring-lite' ), __( 'Also used to verify Plivo’s webhook signatures, so incoming replies are refused without it.', 'orderring-lite' ) );
+				$this->provider_text_row( 'orlt_plivo_from', 'ORLT_PLIVO_FROM', __( 'From number or sender ID', 'orderring-lite' ), __( 'A Plivo number on your account in E.164 format (e.g. +15055551234), or an alphanumeric sender ID where allowed.', 'orderring-lite' ) );
+				?>
+			</table>
+			<?php $this->provider_webhook_help( 'plivo' ); ?>
+		</div>
+		<?php
+	}
+
+	/**
+	 * @param string $option   Option.
+	 * @param string $constant Constant.
+	 * @param string $label    Label.
+	 * @param string $help     Help text.
+	 */
+	private function provider_text_row( $option, $constant, $label, $help ) {
+		?>
+		<tr>
+			<th><label for="<?php echo esc_attr( $option ); ?>"><?php echo esc_html( $label ); ?></label></th>
+			<td>
+				<?php if ( ORLT_SMS_Providers::is_constant( $constant ) ) : ?>
+					<input type="text" value="<?php echo esc_attr( '•••••••• (' . $constant . ')' ); ?>" class="regular-text" disabled />
+				<?php else : ?>
+					<input type="text" id="<?php echo esc_attr( $option ); ?>" name="<?php echo esc_attr( $option ); ?>" value="<?php echo esc_attr( (string) get_option( $option, '' ) ); ?>" class="regular-text" autocomplete="off" />
+				<?php endif; ?>
+				<?php if ( '' !== $help ) : ?>
+					<p class="description"><?php echo esc_html( $help ); ?></p>
+				<?php endif; ?>
+			</td>
+		</tr>
+		<?php
+	}
+
+	/**
+	 * Password row that never prints the saved secret.
+	 *
+	 * @param string $option   Option.
+	 * @param string $constant Constant.
+	 * @param string $label    Label.
+	 * @param string $help     Help text.
+	 */
+	private function provider_secret_row( $option, $constant, $label, $help ) {
+		$has = '' !== (string) get_option( $option, '' );
+		?>
+		<tr>
+			<th><label for="<?php echo esc_attr( $option ); ?>"><?php echo esc_html( $label ); ?></label></th>
+			<td>
+				<?php if ( ORLT_SMS_Providers::is_constant( $constant ) ) : ?>
+					<?php /* translators: %s: wp-config constant name */ ?>
+					<input type="password" value="" class="regular-text" disabled placeholder="<?php echo esc_attr( sprintf( __( 'Set via %s', 'orderring-lite' ), $constant ) ); ?>" />
+				<?php else : ?>
+					<input type="password" id="<?php echo esc_attr( $option ); ?>" name="<?php echo esc_attr( $option ); ?>" value="" class="regular-text" autocomplete="new-password" placeholder="<?php echo $has ? esc_attr__( '•••••••• (leave blank to keep)', 'orderring-lite' ) : ''; ?>" />
+				<?php endif; ?>
+				<?php if ( '' !== $help ) : ?>
+					<p class="description"><?php echo esc_html( $help ); ?></p>
+				<?php endif; ?>
+			</td>
+		</tr>
+		<?php
+	}
+
+	/**
+	 * Where to paste the inbound and delivery-receipt webhook URLs.
+	 *
+	 * @param string $id vonage|plivo.
+	 */
+	private function provider_webhook_help( $id ) {
+		$urls = ORLT_SMS_Providers::webhook_urls( $id );
+		if ( ! $urls ) {
+			return;
+		}
+		if ( 'vonage' === $id ) {
+			$where = __( 'In the Vonage dashboard: API Settings → SMS settings → choose “SMS API”, then set the Inbound SMS webhook and the Delivery receipts webhook (method POST or POST-JSON). Also link your number to the inbound URL under Numbers.', 'orderring-lite' );
+		} else {
+			$where = __( 'In the Plivo console: Messaging → Applications → create an application with this Message URL (method POST) and attach it to your number. Delivery status uses the second URL, which OrderRing Lite adds to each text automatically.', 'orderring-lite' );
+		}
+		?>
+		<p class="description"><?php echo esc_html( $where ); ?></p>
+		<ul>
+			<?php if ( ORLT_SMS_Providers::supports( 'inbound', $id ) ) : ?>
+				<li><?php echo esc_html__( 'Incoming SMS:', 'orderring-lite' ); ?> <code><?php echo esc_html( $urls['inbound'] ); ?></code></li>
+			<?php endif; ?>
+			<?php if ( ORLT_SMS_Providers::supports( 'delivery_status', $id ) ) : ?>
+				<li><?php echo esc_html__( 'Delivery status:', 'orderring-lite' ); ?> <code><?php echo esc_html( $urls['status'] ); ?></code></li>
+			<?php endif; ?>
+		</ul>
+		<?php
+	}
+
 	public static function copy_option_map() {
 		return array(
 			'toc_account_sid'                => 'orlt_account_sid',
@@ -401,6 +731,15 @@ class ORLT_Admin {
 			'toc_quiet_hours_start'          => 'orlt_quiet_hours_start',
 			'toc_quiet_hours_end'            => 'orlt_quiet_hours_end',
 			'toc_plain_optout_mode'          => 'orlt_plain_optout_mode',
+			'toc_sms_provider'               => 'orlt_sms_provider',
+			'toc_vonage_api_key'             => 'orlt_vonage_api_key',
+			'toc_vonage_api_secret'          => 'orlt_vonage_api_secret',
+			'toc_vonage_signature_secret'    => 'orlt_vonage_signature_secret',
+			'toc_vonage_signature_method'    => 'orlt_vonage_signature_method',
+			'toc_vonage_from'                => 'orlt_vonage_from',
+			'toc_plivo_auth_id'              => 'orlt_plivo_auth_id',
+			'toc_plivo_auth_token'           => 'orlt_plivo_auth_token',
+			'toc_plivo_from'                 => 'orlt_plivo_from',
 		);
 	}
 
@@ -470,7 +809,7 @@ class ORLT_Admin {
 		}
 		check_admin_referer( 'orlt_copy_from_pro' );
 		self::copy_from_pro();
-		if ( class_exists( 'ORLT_Auto' ) ) {
+		if ( class_exists( 'ORLT_Auto' ) && ORLT_Woo::active() ) {
 			ORLT_Auto::instance()->recover_deferred_notifications();
 		}
 		if ( function_exists( 'wp_safe_redirect' ) ) {
@@ -493,8 +832,8 @@ class ORLT_Admin {
 
 	public function maybe_recover_deferred( $option, $old, $new ) {
 		unset( $old, $new );
-		$watch = array( 'orlt_account_sid', 'orlt_auth_token', 'orlt_from_number' );
-		if ( in_array( (string) $option, $watch, true ) && class_exists( 'ORLT_Auto' ) ) {
+		$watch = array_merge( array( 'orlt_account_sid', 'orlt_auth_token', 'orlt_from_number' ), ORLT_SMS_Providers::option_names() );
+		if ( in_array( (string) $option, $watch, true ) && class_exists( 'ORLT_Auto' ) && ORLT_Woo::active() ) {
 			ORLT_Auto::instance()->recover_deferred_notifications();
 		}
 	}

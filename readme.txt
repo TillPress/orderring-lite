@@ -1,30 +1,32 @@
-=== OrderRing Lite ===
+=== OrderRing Lite – SMS for WooCommerce ===
 Contributors: alextechgamer
-Tags: woocommerce, sms, twilio, pickup, notifications
+Tags: sms, woocommerce sms, order notifications, twilio, local pickup
 Requires at least: 6.2
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 1.1.2
+Stable tag: 1.5.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 WC requires at least: 7.0
 
-Ready-for-pickup SMS for WooCommerce via your own Twilio account. Consent-aware. You pay Twilio directly, zero markup.
+Text WooCommerce customers when an order is ready for pickup (or hits a status you pick), via your own Twilio, Vonage or Plivo. Zero markup.
 
 == Description ==
 
-OrderRing Lite texts customers when an order is ready for pickup, using **your** Twilio account.
+OrderRing Lite texts customers when an order is ready for pickup, using **your** Twilio, Vonage or Plivo account.
 
 * Send SMS from the order screen
+* Choose your SMS provider: Twilio, Vonage or Plivo. Replies, STOP opt-outs and delivery status work with all three
 * Auto SMS when an order enters **Ready for Pickup** (or any status you map)
 * Checkout consent checkbox (classic + block checkout)
 * STOP / HELP / START keyword handling, with every US FCC opt-out word (STOP, QUIT, END, REVOKE, OPT OUT, CANCEL, UNSUBSCRIBE) and plain-language replies like "please stop texting me"
 * Optional quiet hours in the customer's own time zone: the pickup text waits until morning where the customer is
 * Optional Local Pickup filter
+* Triggers: text your admin number when someone creates an account, resets their password, posts a comment or sends a Contact Form 7 form. A Contact Form 7 form can also text the person who sent it, only when they ticked a consent checkbox you map
 * Compatible with WooCommerce HPOS
 * Help & demo page: one-click demo order, the exact pickup text a customer would get, and a support ticket form
 
-**Bring your own Twilio account.** The plugin does not sell or provide messaging services. Message costs are billed by Twilio to you — OrderRing adds zero markup.
+**Bring your own provider account.** The plugin does not sell or provide messaging services. Message costs are billed to you by Twilio, Vonage or Plivo — OrderRing adds zero markup.
 
 Twilio and all related logos are trademarks of Twilio Inc. or its affiliates. OrderRing is not affiliated with, endorsed, or sponsored by Twilio Inc.
 
@@ -32,15 +34,15 @@ A paid **OrderRing** plugin (voice, WhatsApp, two-way chat, bulk reminders) is s
 
 == External services ==
 
-This plugin connects to **Twilio**, a third-party SMS/messaging provider, using the Twilio account credentials **you** configure on the settings screen (or in `wp-config.php`). Twilio is required for the plugin's core function: sending and receiving order text messages. The plugin does not resell or provide messaging itself — you contract with Twilio directly and Twilio bills you.
+This plugin connects to **one** third-party SMS provider, the one **you** choose on the settings screen: **Twilio** (the default), **Vonage** or **Plivo**. It uses the account credentials you enter there (or in `wp-config.php`). A provider is required for the plugin's core function: sending and receiving text messages. The plugin does not resell or provide messaging itself — you contract with the provider directly and the provider bills you. Only the selected provider is contacted when a text is sent; a provider you do not use is never contacted.
 
-What is sent, and when:
+**Twilio** (api.twilio.com) — what is sent, and when:
 
-* **When you (or the "Ready for Pickup" automation) send an SMS:** the plugin calls the Twilio REST API (`https://api.twilio.com`) with your Account SID and Auth Token, the destination phone number, your Twilio "from" number, and the message body (which may include the customer's first name, order number, order total, and tracking number from the merge tags you configure).
+* **When you (or the "Ready for Pickup" automation, or a trigger rule) send an SMS:** the plugin calls the Twilio REST API (`https://api.twilio.com`) with your Account SID and Auth Token, the destination phone number, your Twilio "from" number, and the message body (which may include the customer's first name, order number, order total, and tracking number from the merge tags you configure, and for a trigger rule the account, comment or Contact Form 7 field values you put in its message).
 * **When you use "Test connection":** the plugin makes a read-only call to the Twilio API to confirm your credentials are valid.
 * **When a customer replies (STOP/HELP/START or any inbound text) or Twilio reports delivery status:** Twilio calls this site's webhook URLs. The plugin verifies Twilio's request signature and stores the message/status in your own database. No customer data is sent out in this direction — it is received from Twilio.
 
-No data is sent to Twilio unless you have entered Twilio credentials and either send a message or receive one. Apart from the optional support ticket below, this plugin sends no data to the plugin author or any other third party — there is no license check, telemetry, or phone-home.
+No data is sent to a provider unless you have selected it, entered its credentials, and either send a message or receive one. Apart from the optional support ticket below, this plugin sends no data to the plugin author or any other third party — there is no license check, telemetry, or phone-home.
 
 **Support tickets (only when you send one):** the Help & demo page has a support form. When an administrator fills it in, ticks the consent box, and presses **Send ticket**, the plugin sends the name, reply-to email, topic, subject, message, this site's address, and (if ticked) a system report of WordPress/WooCommerce/PHP versions, theme, and active plugin names to the Tillpress support desk at `https://tillpress.com/wp-json/tp/v1/support`. Nothing is sent automatically, in the background, or on a schedule, and no passwords, keys, or customer/order data are included. Service provider: Tillpress (Alex Software Holdings LLC). Privacy policy: https://tillpress.com/privacy/ — Terms: https://tillpress.com/terms/ . "Email instead" opens the same ticket in your own email app and sends nothing from the site.
 
@@ -49,10 +51,24 @@ Twilio's terms and privacy policy:
 * Terms of Service: https://www.twilio.com/legal/tos
 * Privacy Policy: https://www.twilio.com/legal/privacy
 
+**Vonage** (Vonage Communications APIs, formerly Nexmo; rest.nexmo.com) — used only when you choose Vonage as the SMS provider.
+
+* **When a text is sent** (the "Ready for Pickup" automation, a trigger rule, a text you send from an order, a test text, or a STOP/HELP/START auto-reply): the plugin calls `https://rest.nexmo.com/sms/json` with your API key and API secret, your sender number or ID, the customer's phone number, the message text, and this site's delivery-receipt URL.
+* **When a customer replies or Vonage reports delivery:** Vonage calls this site's webhook URLs. The plugin verifies Vonage's signature with your signature secret and stores the message or status in your own database. Nothing is sent out in this direction.
+* Terms of Use: https://www.vonage.com/legal/communications-apis/terms-of-use/
+* Privacy Policy: https://www.vonage.com/legal/privacy-policy/
+
+**Plivo** (api.plivo.com) — used only when you choose Plivo as the SMS provider.
+
+* **When a text is sent** (same cases as above): the plugin calls `https://api.plivo.com/v1/Account/{your Auth ID}/Message/` with your Auth ID and Auth Token, your sender number or ID, the customer's phone number, the message text, and this site's status-callback URL.
+* **When a customer replies or Plivo reports delivery status:** Plivo calls this site's webhook URLs. The plugin verifies Plivo's signature with your Auth Token and stores the message or status in your own database. Nothing is sent out in this direction.
+* Terms of Service: https://www.plivo.com/legal/tos/
+* Privacy Policy: https://www.plivo.com/legal/privacy/
+
 == Installation ==
 
 1. Upload the `orderring-lite` folder to `/wp-content/plugins/`
-2. Activate through the Plugins menu (WooCommerce must be active)
+2. Activate through the Plugins menu (WooCommerce is optional: without it you can still send texts, use Triggers and get replies)
 3. Open **OrderRing Lite** and enter your Twilio Account SID, Auth Token, and From Number
 4. Map Ready for Pickup (the plugin registers that status by default)
 5. In the Twilio Console, set the Incoming SMS webhook to the URL shown on the settings screen
@@ -79,6 +95,13 @@ Only what you send to Twilio, and only when you (or the "Ready for Pickup" autom
 
 = Do I need A2P 10DLC? =
 If you text US mobile numbers, carriers require A2P 10DLC (or a verified toll-free number). Register that in the Twilio Console. This plugin does not file it for you.
+
+= Which SMS providers does it work with? =
+Twilio (the default), Vonage and Plivo. Pick one under **OrderRing Lite → Settings → SMS provider** and enter that account's credentials. All three send texts, receive replies (including STOP / HELP / START) and report delivery status. Your opt-out list and consent records are kept when you switch providers, and replies that still reach a provider you used before are honored.
+
+= Does it need WooCommerce? =
+
+No. Without WooCommerce, Lite sends texts through your Twilio account and handles STOP/HELP/START replies. The ready-for-pickup text and the checkout consent box need WooCommerce.
 
 = Is there a license key or trial? =
 No. Every feature listed above works without a key, trial, or phone-home to the author.
@@ -111,6 +134,28 @@ Yes. Define `ORLT_ACCOUNT_SID`, `ORLT_AUTH_TOKEN`, and/or `ORLT_FROM_NUMBER` (th
 
 
 
+
+
+
+= 1.5.0 =
+* New Triggers screen (OrderRing Lite → Triggers): text your admin number when someone creates an account, resets their password, posts a comment or sends a Contact Form 7 form. Put any form field in the message as {field:your-name}.
+* A Contact Form 7 form can also text the person who sent it, only when they ticked the consent checkbox you map in the rule. That consent is recorded with the form ID.
+* Trigger texts respect STOP replies, consent and quiet hours (held until they end), and anything a visitor can cause is rate limited: by default 5 events an hour from one visitor, 3 texts an hour to one number and 30 to the admin number.
+= 1.4.0 =
+* New: choose your SMS provider. Besides Twilio, Lite now sends through your own Vonage or Plivo account (OrderRing Lite → Settings → SMS provider). Replies, STOP / HELP / START and delivery status work with all three; Vonage and Plivo webhooks are verified with their signatures and refused without them.
+* Your opt-out list and consent records stay the same when you switch providers, and a STOP that still reaches a provider you used before is honored.
+* A text whose result is unknown (for example a timeout) is never resent through another provider.
+* The readme's External services section now lists Vonage and Plivo: what is sent, when, and their terms and privacy policies.
+* The support report shows which provider is selected and whether it is set up, never its credentials.
+= 1.3.0 =
+* Every logged message now records what it was about (an order today; forms, users and other events later). Existing order messages are stamped in the background after the update, in small batches so large logs stay fast.
+* Consent is now kept per phone number, with order and service texts kept apart from marketing texts. A STOP always wins and also withdraws marketing consent. Checkout consent is recorded against the phone number as well as the order.
+* Merge tags come from one shared list, so {site_name}, {contact_first_name}, {contact_last_name} and {contact_phone} work in any text, with or without an order. Order tags work exactly as before.
+= 1.2.0 =
+* WooCommerce is now optional. On a site without WooCommerce, Lite still sends texts through your Twilio account, logs them, and answers STOP/HELP/START. The pickup text and checkout consent need WooCommerce and are hidden until it is active (your saved settings are kept). Stores with WooCommerce work exactly as before.
+* New "Send test SMS" button under the Twilio credentials.
+= 1.1.3 =
+* Renamed to "OrderRing Lite – SMS for WooCommerce" so stores searching for WooCommerce SMS can find it. Name, tags and description only; no settings, data or behavior change.
 = 1.1.2 =
 * Refreshed admin look, shared across Tillpress plugins: rounded cards, pill tabs and buttons, settings forms and tables as cards. Only the plugin's own screens change; no settings or data change.
 = 1.1.1 =

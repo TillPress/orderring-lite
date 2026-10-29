@@ -9,6 +9,18 @@
 		});
 	}
 
+	// Settings: show only the selected SMS provider's fields (all stay in the form).
+	function syncProvider() {
+		var $select = $('#orlt_sms_provider');
+		if (!$select.length) return;
+		var id = $select.val();
+		$('.orlt-provider-fields').each(function () {
+			this.hidden = $(this).attr('data-provider') !== id;
+		});
+	}
+	$(document).on('change', '#orlt_sms_provider', syncProvider);
+	$(syncProvider);
+
 	$(document).on('click', '#orlt-test-connection', function () {
 		var $btn = $(this);
 		var $msg = $('#orlt-test-msg');
@@ -20,6 +32,18 @@
 			} else {
 				$msg.text((res && res.data && (res.data.error || res.data.message)) || 'Failed');
 			}
+		}).always(function () {
+			$btn.prop('disabled', false);
+		});
+	});
+
+	$(document).on('click', '#orlt-test-sms', function () {
+		var $btn = $(this);
+		var $msg = $('#orlt-test-sms-msg');
+		$btn.prop('disabled', true);
+		$msg.text(orltAdmin.i18n.sending);
+		post('orlt_test_sms', { phone: $('#orlt-test-sms-phone').val() }, $msg).done(function (res) {
+			$msg.text((res && res.data && res.data.message) || (res && res.success ? 'OK' : 'Failed'));
 		}).always(function () {
 			$btn.prop('disabled', false);
 		});

@@ -43,16 +43,99 @@ class ORLT_Logger {
 			resolved_at datetime DEFAULT NULL,
 			resolved_by bigint(20) unsigned DEFAULT 0,
 			admin_user_id bigint(20) unsigned DEFAULT 0,
+			context_type varchar(20) NOT NULL DEFAULT '',
+			context_id bigint(20) unsigned NOT NULL DEFAULT 0,
 			created_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			PRIMARY KEY (id),
 			KEY order_id (order_id),
 			KEY phone (phone),
 			KEY twilio_sid (twilio_sid),
-			KEY created_at (created_at)
+			KEY created_at (created_at),
+			KEY context (context_type,context_id)
 		) {$charset};";
 
 		require_once ABSPATH . 'wp-admin/includes/upgrade.php';
 		dbDelta( $sql );
+	}
+
+	/**
+	 * What a logged message is about. Order texts are 'order'; other senders name
+	 * their own (form, user, manual, alert, ...).
+	 */
+	const CONTEXT_ORDER = 'order';
+
+	/** Rows per UPDATE when stamping old order rows with context_type = 'order'. */
+	const CONTEXT_BACKFILL_BATCH = 5000;
+
+	/**
+	 * Resolve the context pair stored with a message (pure; twin of TOC_Logger).
+	 *
+	 * @param array $data Log args (context_type, context_id, order_id).
+	 * @return array{0:string,1:int}
+	 */
+	public static function resolve_context( array $data ) {
+		$type = isset( $data['context_type'] ) ? strtolower( (string) $data['context_type'] ) : '';
+		$type = substr( (string) preg_replace( '/[^a-z0-9_\-]/', '', $type ), 0, 20 );
+		$id   = isset( $data['context_id'] ) ? (int) $data['context_id'] : 0;
+		$oid  = isset( $data['order_id'] ) ? (int) $data['order_id'] : 0;
+		if ( '' === $type && $oid > 0 ) {
+			return array( self::CONTEXT_ORDER, $oid );
+		}
+		if ( '' === $type ) {
+			return array( '', 0 );
+		}
+		if ( $id <= 0 && self::CONTEXT_ORDER === $type ) {
+			$id = max( 0, $oid );
+		}
+		return array( $type, max( 0, $id ) );
+	}
+
+	/**
+	 * The UPDATE that stamps one id range of order rows logged before the context columns existed (pure, for tests).
+	 *
+	 * @param string $table Table name.
+	 * @param int    $from  Exclusive lower id.
+	 * @param int    $to    Inclusive upper id.
+	 * @return string SQL.
+	 */
+	public static function context_backfill_sql( $table, $from, $to ) {
+		return sprintf(
+			"UPDATE %s SET context_type = 'order', context_id = order_id WHERE id > %d AND id <= %d AND order_id > 0 AND context_type = ''",
+			preg_replace( '/[^A-Za-z0-9_]/', '', (string) $table ),
+			(int) $from,
+			(int) $to
+		);
+	}
+
+	/**
+	 * Stamp existing order rows with context_type = 'order' in id ranges. Resumes from
+	 * orlt_log_context_cursor on the next admin request when it runs out of time; -1 = done.
+	 *
+	 * @param float $budget Seconds to spend in this call.
+	 * @return bool True when the whole table is done.
+	 */
+	public static function backfill_context( $budget = 2.0 ) {
+		global $wpdb;
+		$cursor = (int) get_option( 'orlt_log_context_cursor', 0 );
+		if ( $cursor < 0 ) {
+			return true;
+		}
+		$table  = $wpdb->prefix . 'orlt_communications';
+		$max_id = (int) $wpdb->get_var( "SELECT MAX(id) FROM {$table}" ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.DirectDatabaseQuery
+		$start  = microtime( true );
+		while ( $cursor < $max_id ) {
+			$to = min( $max_id, $cursor + self::CONTEXT_BACKFILL_BATCH );
+			if ( false === $wpdb->query( self::context_backfill_sql( $table, $cursor, $to ) ) ) { // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared,WordPress.DB.DirectDatabaseQuery
+				return false;
+			}
+			$cursor = $to;
+			if ( ( microtime( true ) - $start ) > $budget ) {
+				update_option( 'orlt_log_context_cursor', $cursor, false );
+				return false;
+			}
+		}
+		update_option( 'orlt_log_context_cursor', -1, false );
+		return true;
 	}
 
 	public static function create_opt_outs_table() {
@@ -134,23 +217,38 @@ class ORLT_Logger {
 		);
 		$data     = wp_parse_args( $args, $defaults );
 
-		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
-		$wpdb->insert(
-			$this->table,
-			array(
-				'order_id'      => absint( $data['order_id'] ),
-				'phone'         => sanitize_text_field( $data['phone'] ),
-				'direction'     => in_array( $data['direction'], array( 'outbound', 'inbound' ), true ) ? $data['direction'] : 'outbound',
-				'type'          => 'sms',
-				'body'          => wp_kses_post( $data['body'] ),
-				'twilio_sid'    => sanitize_text_field( $data['twilio_sid'] ),
-				'status'        => sanitize_text_field( $data['status'] ),
-				'resolved'      => absint( $data['resolved'] ),
-				'admin_user_id' => absint( $data['admin_user_id'] ),
-				'created_at'    => current_time( 'mysql' ),
-			),
-			array( '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%d', '%s' )
+		$row     = array(
+			'order_id'      => absint( $data['order_id'] ),
+			'phone'         => sanitize_text_field( $data['phone'] ),
+			'direction'     => in_array( $data['direction'], array( 'outbound', 'inbound' ), true ) ? $data['direction'] : 'outbound',
+			'type'          => 'sms',
+			'body'          => wp_kses_post( $data['body'] ),
+			'twilio_sid'    => sanitize_text_field( $data['twilio_sid'] ),
+			'status'        => sanitize_text_field( $data['status'] ),
+			'resolved'      => absint( $data['resolved'] ),
+			'admin_user_id' => absint( $data['admin_user_id'] ),
+			'created_at'    => current_time( 'mysql' ),
 		);
+		$formats = array( '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%d', '%s' );
+
+		list( $context_type, $context_id ) = self::resolve_context( $data );
+		if ( '' !== $context_type ) {
+			$row['context_type'] = $context_type;
+			$row['context_id']   = $context_id;
+			$formats[]           = '%s';
+			$formats[]           = '%d';
+		}
+
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+		$ok = $wpdb->insert( $this->table, $row, $formats );
+		if ( false === $ok && '' !== $context_type ) {
+			// Context columns may be missing until dbDelta runs: keep the message.
+			unset( $row['context_type'], $row['context_id'] );
+			array_pop( $formats );
+			array_pop( $formats );
+			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+			$wpdb->insert( $this->table, $row, $formats );
+		}
 
 		return $wpdb->insert_id;
 	}
@@ -261,7 +359,7 @@ class ORLT_Logger {
 		}
 
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
-		return false !== $wpdb->insert(
+		$added = false !== $wpdb->insert(
 			$this->opt_outs_table,
 			array(
 				'phone'        => $norm,
@@ -271,6 +369,11 @@ class ORLT_Logger {
 			),
 			array( '%s', '%s', '%s', '%s' )
 		);
+		// STOP also withdraws marketing consent: a later START never re-enrolls marketing.
+		if ( $added && class_exists( 'ORLT_Consents' ) && ORLT_Consents::schema_ready() ) {
+			ORLT_Consents::instance()->revoke_marketing( $norm, 'stop' );
+		}
+		return $added;
 	}
 
 	public function remove_opt_out_phone( $phone ) {
@@ -344,6 +447,10 @@ class ORLT_Logger {
 	}
 
 	public function find_order_by_phone( $phone ) {
+		// No WooCommerce, no orders to match: an inbound text is logged without one.
+		if ( ! function_exists( 'wc_get_orders' ) ) {
+			return 0;
+		}
 		$from_e164 = $this->normalize_phone( $phone );
 		if ( $from_e164 === '' ) {
 			return 0;
@@ -396,7 +503,7 @@ class ORLT_Logger {
 		$exact = array();
 		foreach ( array_keys( $candidate_ids ) as $oid ) {
 			$oid   = (int) $oid;
-			$order = wc_get_order( $oid );
+			$order = ORLT_Woo::order( $oid );
 			if ( $this->order_billing_matches_from( $order, $from_e164 ) ) {
 				$exact[ $oid ] = $order;
 			}

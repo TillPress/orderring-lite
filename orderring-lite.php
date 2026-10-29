@@ -1,16 +1,15 @@
 <?php
 /**
- * Plugin Name:       OrderRing Lite
+ * Plugin Name:       OrderRing Lite – SMS for WooCommerce
  * Plugin URI:        https://tillpress.com/lite/
- * Description:       Ready-for-pickup SMS for WooCommerce via your own Twilio account. Checkout consent and STOP/HELP/START included. Bring your own Twilio account — you pay Twilio directly, zero markup.
- * Version:           1.1.2
+ * Description:       Ready-for-pickup SMS for WooCommerce (or any one order status you choose) via your own Twilio account. Checkout consent and STOP/HELP/START included. Bring your own Twilio account — you pay Twilio directly, zero markup.
+ * Version:           1.5.0
  * Author:            Tillpress
  * Author URI:        https://tillpress.com
  * Requires at least: 6.2
  * Requires PHP:      7.4
  * WC requires at least: 7.0
  * WC tested up to:  11.2
- * Requires Plugins:  woocommerce
  * Text Domain:       orderring-lite
  * Domain Path:       /languages
  * License:           GPLv2 or later
@@ -21,17 +20,25 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'ORLT_VERSION', '1.1.2' );
+define( 'ORLT_VERSION', '1.5.0' );
 define( 'ORLT_BRAND_NAME', 'OrderRing Lite' );
 define( 'ORLT_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ORLT_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'ORLT_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
 define( 'ORLT_PLUGIN_FILE', __FILE__ );
 
+require_once ORLT_PLUGIN_DIR . 'includes/class-orlt-woo.php';
+require_once ORLT_PLUGIN_DIR . 'includes/class-orlt-merge-tags.php';
+require_once ORLT_PLUGIN_DIR . 'includes/class-orlt-consents.php';
 require_once ORLT_PLUGIN_DIR . 'includes/class-orlt-caps.php';
 require_once ORLT_PLUGIN_DIR . 'includes/class-orlt-compliance.php';
 require_once ORLT_PLUGIN_DIR . 'includes/class-orlt-logger.php';
 require_once ORLT_PLUGIN_DIR . 'includes/class-orlt-twilio.php';
+require_once ORLT_PLUGIN_DIR . 'includes/interface-orlt-sms-provider.php';
+require_once ORLT_PLUGIN_DIR . 'includes/class-orlt-sms-providers.php';
+require_once ORLT_PLUGIN_DIR . 'includes/class-orlt-sms-twilio.php';
+require_once ORLT_PLUGIN_DIR . 'includes/class-orlt-sms-vonage.php';
+require_once ORLT_PLUGIN_DIR . 'includes/class-orlt-sms-plivo.php';
 require_once ORLT_PLUGIN_DIR . 'includes/class-orlt-webhooks.php';
 require_once ORLT_PLUGIN_DIR . 'includes/class-orlt-admin.php';
 require_once ORLT_PLUGIN_DIR . 'includes/class-orlt-order-meta.php';
@@ -43,6 +50,7 @@ require_once ORLT_PLUGIN_DIR . 'includes/class-orlt-demo.php';
 require_once ORLT_PLUGIN_DIR . 'includes/class-orlt-support.php';
 require_once ORLT_PLUGIN_DIR . 'includes/class-orlt-skin.php';
 require_once ORLT_PLUGIN_DIR . 'includes/class-orlt-hub.php';
+require_once ORLT_PLUGIN_DIR . 'includes/class-orlt-triggers.php';
 
 final class ORLT_Plugin {
 
@@ -82,6 +90,8 @@ final class ORLT_Plugin {
 		}
 		$this->migrate_legacy_orl_prefix();
 		ORLT_Logger::create_table();
+		ORLT_Logger::backfill_context();
+		ORLT_Consents::create_table();
 		ORLT_Logger::create_opt_outs_table();
 		ORLT_Logger::migrate_opt_outs_from_option();
 		ORLT_Logger::backfill_opt_out_last10();
@@ -203,14 +213,15 @@ final class ORLT_Plugin {
 			return;
 		}
 
-		if ( ! class_exists( 'WooCommerce' ) ) {
-			add_action( 'admin_notices', array( $this, 'woocommerce_missing_notice' ) );
-			return;
-		}
+		// WooCommerce is optional: core runs on any WordPress site, the order features
+		// (ORLT_Woo::MODULE_CLASSES) start only when WooCommerce is loaded.
+		$woo = ORLT_Woo::active();
 
 		if ( get_option( 'orlt_db_version' ) !== ORLT_VERSION ) {
 			$this->migrate_legacy_orl_prefix();
 			ORLT_Logger::create_table();
+			ORLT_Logger::backfill_context();
+			ORLT_Consents::create_table();
 			ORLT_Logger::create_opt_outs_table();
 			ORLT_Logger::migrate_opt_outs_from_option();
 			ORLT_Logger::backfill_opt_out_last10();
@@ -221,20 +232,37 @@ final class ORLT_Plugin {
 		}
 
 		ORLT_Caps::maybe_seed();
+		// A very large message log is stamped with its order context over several admin requests.
+		if ( (int) get_option( 'orlt_log_context_cursor', 0 ) >= 0 ) {
+			add_action( 'admin_init', array( 'ORLT_Logger', 'backfill_context' ), 20, 0 );
+		}
 		ORLT_Logger::instance();
+		ORLT_Consents::instance();
 		ORLT_Twilio::instance();
 		ORLT_Webhooks::instance();
 		ORLT_Admin::instance();
-		ORLT_Order_Meta::instance();
-		ORLT_Statuses::instance();
-		ORLT_Auto::instance();
-		ORLT_Checkout::instance();
+		if ( $woo ) {
+			ORLT_Order_Meta::instance();
+			ORLT_Statuses::instance();
+			ORLT_Auto::instance();
+			ORLT_Checkout::instance();
+		}
 		ORLT_Review_Nudge::instance();
 		if ( is_admin() ) {
 			ORLT_Support::instance();
 			ORLT_Skin::init();
 			ORLT_Hub::instance();
 		}
+		// Event triggers (WordPress core, Contact Form 7): no WooCommerce needed.
+		ORLT_Triggers::instance();
+
+		/**
+		 * Fires once OrderRing Lite core (and the WooCommerce module, when WooCommerce
+		 * is active) has started. Integrations hook here.
+		 *
+		 * @param bool $woo Whether the WooCommerce module loaded.
+		 */
+		do_action( 'orlt_loaded', $woo );
 	}
 
 	public function pro_is_active() {
@@ -248,18 +276,6 @@ final class ORLT_Plugin {
 		}
 		echo '<div class="notice notice-info"><p>';
 		echo esc_html__( 'OrderRing Pro is active (licensed or on its free trial) and sending, so OrderRing Lite is idle. You can deactivate Lite — Pro already includes these SMS tools.', 'orderring-lite' );
-		echo '</p></div>';
-	}
-
-	public function woocommerce_missing_notice() {
-		echo '<div class="notice notice-error"><p>';
-		echo wp_kses_post(
-			sprintf(
-				/* translators: %s: plugin name */
-				__( '<strong>%s</strong> requires WooCommerce to be active.', 'orderring-lite' ),
-				ORLT_BRAND_NAME
-			)
-		);
 		echo '</p></div>';
 	}
 }

@@ -225,6 +225,28 @@ class ORLT_Twilio {
 		);
 	}
 
+	/**
+	 * POST one plain SMS to Twilio's Messages API (ORLT_SMS_Twilio's transport).
+	 *
+	 * @param string $to         E.164 recipient.
+	 * @param string $body       Final text.
+	 * @param string $status_url Delivery-status callback ('' = none).
+	 * @return array request() result.
+	 */
+	public function api_send_message( $to, $body, $status_url = '' ) {
+		$creds  = $this->get_credentials();
+		$params = array(
+			'To'   => (string) $to,
+			'From' => $creds['from'],
+			'Body' => (string) $body,
+		);
+		if ( '' !== (string) $status_url ) {
+			$params['StatusCallback']       = (string) $status_url;
+			$params['StatusCallbackMethod'] = 'POST';
+		}
+		return $this->request( 'POST', 'Messages.json', $params );
+	}
+
 	public function is_configured() {
 		$c = $this->get_credentials();
 		return $c['sid'] !== '' && $c['token'] !== '' && $c['from'] !== '';
@@ -234,50 +256,34 @@ class ORLT_Twilio {
 	 * Replace template merge tags.
 	 * {order_number} {order_id} {customer_first_name} {customer_last_name}
 	 * {customer_full_name} {store_name} {phone} {order_total} {billing_email}
-	 * {tracking} {tracking_url}
+	 * {tracking} {tracking_url}, plus {site_name} and {contact_*} (ORLT_Merge_Tags).
+	 *
+	 * @param string        $message Template.
+	 * @param WC_Order|null $order   Order for order tags, or null.
+	 * @param array         $extra   Extra '{tag}' => value replacements.
+	 * @param array         $context More context for registered tags (contact, phone, ...).
 	 */
-	public function merge_tags( $message, $order = null ) {
+	public function merge_tags( $message, $order = null, $extra = array(), $context = array() ) {
 		$message = (string) $message;
 		if ( $message === '' ) {
 			return $message;
 		}
 
-		$store = wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES );
+		// Tags come from ORLT_Merge_Tags: core ({site_name}, {store_name}, {contact_*}),
+		// the WooCommerce module (order tags) and any integration.
+		$context          = is_array( $context ) ? $context : array();
+		$context['order'] = $order;
+		$replacements     = ORLT_Merge_Tags::values( $context );
 
-		$replacements = array(
-			'{store_name}'          => $store,
-			'{order_number}'        => '',
-			'{order_id}'            => '',
-			'{customer_first_name}' => '',
-			'{customer_last_name}'  => '',
-			'{customer_full_name}'  => '',
-			'{phone}'               => '',
-			'{order_total}'         => '',
-			'{billing_email}'       => '',
-			'{tracking}'            => '',
-			'{tracking_url}'        => '',
-		);
-
-		if ( $order instanceof WC_Order ) {
-			$replacements['{order_number}']        = (string) $order->get_order_number();
-			$replacements['{order_id}']            = (string) $order->get_id();
-			$replacements['{customer_first_name}'] = (string) $order->get_billing_first_name();
-			$replacements['{customer_last_name}']  = (string) $order->get_billing_last_name();
-			$replacements['{customer_full_name}']  = trim( $order->get_formatted_billing_full_name() );
-			$replacements['{phone}']               = (string) $order->get_billing_phone();
-			$replacements['{order_total}']         = str_replace( "\xC2\xA0", " ", html_entity_decode( wp_strip_all_tags( $order->get_formatted_order_total() ), ENT_QUOTES | ENT_HTML5, 'UTF-8' ) );
-			$replacements['{billing_email}']       = (string) $order->get_billing_email();
-
-			$tracking                       = $this->tracking_for( $order );
-			$replacements['{tracking}']     = $tracking['number'];
-			$replacements['{tracking_url}'] = $tracking['url'];
+		foreach ( (array) $extra as $tag => $value ) {
+			$replacements[ strtolower( (string) $tag ) ] = (string) $value;
 		}
 
 		// One pass over the template: a value inserted for one tag (customer-typed name,
 		// email, tracking number, store name) is never scanned again, so text such as a
 		// first name of "{order_number}" stays literal. Tags match case-insensitively.
 		return (string) preg_replace_callback(
-			'/\{[a-z_]+\}/i',
+			'/\{[a-z_]+(?::[a-z0-9_\-]+)?\}/i',
 			static function ( $m ) use ( $replacements ) {
 				$tag = strtolower( $m[0] );
 				return array_key_exists( $tag, $replacements ) ? (string) $replacements[ $tag ] : $m[0];
@@ -292,7 +298,7 @@ class ORLT_Twilio {
 	 * @param WC_Order $order Order.
 	 * @return array{number:string,url:string}
 	 */
-	private function tracking_for( $order ) {
+	public function tracking_for( $order ) {
 		$t = self::tracking_from_meta(
 			(string) $order->get_meta( '_ob_tracking_number' ),
 			(string) $order->get_meta( '_ob_tracking_url' ),
@@ -508,7 +514,40 @@ class ORLT_Twilio {
 		return $body . "\n\n" . $footer;
 	}
 
-	public function send_sms( $to, $body, $order_id = 0, $force = false ) {
+	/**
+	 * Which consent a send needs from the consent record (pure; twin of
+	 * TOC_Twilio::consent_requirement): '', 'transactional' or 'marketing'.
+	 *
+	 * @param array $log      send_sms() $args; 'consent' => transactional|marketing.
+	 * @param int   $order_id Order ID.
+	 * @param bool  $force    Staff force-send.
+	 * @param bool  $require  orlt_require_sms_consent.
+	 * @return string
+	 */
+	public static function consent_requirement( $log, $order_id, $force, $require ) {
+		$kind = is_array( $log ) && isset( $log['consent'] ) ? (string) $log['consent'] : '';
+		if ( 'marketing' === $kind ) {
+			return 'marketing';
+		}
+		if ( 'transactional' === $kind && ! $order_id && ! $force && $require ) {
+			return 'transactional';
+		}
+		return '';
+	}
+
+	/**
+	 * Send one SMS.
+	 *
+	 * @param string $to       Recipient.
+	 * @param string $body     Text.
+	 * @param int    $order_id Order ID (0 = not about an order).
+	 * @param bool   $force    Skip the missing-consent check (never the STOP list).
+	 * @param array  $args     consent (transactional|marketing), merge (bool), merge_context,
+	 *                         merge_extra, context_type, context_id.
+	 * @return array
+	 */
+	public function send_sms( $to, $body, $order_id = 0, $force = false, $args = array() ) {
+		$args = is_array( $args ) ? $args : array();
 		if ( self::pro_is_licensed() ) {
 			return array(
 				'success'     => false,
@@ -522,12 +561,17 @@ class ORLT_Twilio {
 				'error'   => __( 'This is an OrderRing Lite demo order. Demo orders are never texted.', 'orderring-lite' ),
 			);
 		}
-		$creds = $this->get_credentials();
-		if ( ! $this->is_configured() ) {
+		// Every text goes through the selected provider (Twilio unless Vonage or Plivo is
+		// chosen). Everything else in this method is provider-agnostic.
+		$provider = $this->sms_provider();
+		if ( ! $provider->is_configured() ) {
 			return array(
 				'success'       => false,
 				'failure_class' => 'deferred',
-				'error'         => __( 'Twilio credentials not configured.', 'orderring-lite' ),
+				'error'         => 'twilio' === $provider->id()
+					? __( 'Twilio credentials not configured.', 'orderring-lite' )
+					/* translators: %s: SMS provider name */
+					: sprintf( __( '%s credentials not configured.', 'orderring-lite' ), $provider->label() ),
 			);
 		}
 
@@ -558,65 +602,93 @@ class ORLT_Twilio {
 			}
 		}
 
-		$order = $order_id ? wc_get_order( $order_id ) : null;
+		// Sends that are not about an order name the consent they need; it is checked
+		// here, so no module can skip it. Marketing consent cannot be forced.
+		$need = self::consent_requirement( $args, $order_id, $force, (bool) get_option( 'orlt_require_sms_consent', 1 ) );
+		if ( '' !== $need && ! ORLT_Consents::instance()->has_consent( $to, $need ) ) {
+			return array(
+				'success'         => false,
+				'consent_missing' => true,
+				'error'           => 'marketing' === $need
+					? __( 'This number has not agreed to marketing texts.', 'orderring-lite' )
+					: __( 'This number has not agreed to texts.', 'orderring-lite' ),
+			);
+		}
+
+		$order = $order_id ? ORLT_Woo::order( $order_id ) : null;
+		$mctx  = isset( $args['merge_context'] ) && is_array( $args['merge_context'] ) ? $args['merge_context'] : array();
+		if ( ! isset( $mctx['phone'] ) ) {
+			$mctx['phone'] = $to;
+		}
 		if ( $order ) {
-			$body = $this->merge_tags( $body, $order );
+			$body = $this->merge_tags( $body, $order, array(), $mctx );
+		} elseif ( ! empty( $args['merge'] ) ) {
+			// Callers without an order opt in to merging, so a typed "{...}" is sent as is.
+			$body = $this->merge_tags( $body, null, isset( $args['merge_extra'] ) ? (array) $args['merge_extra'] : array(), $mctx );
 		}
 
 		$body = $this->append_sms_footer( $body );
 
-		$status_cb = $this->webhook_url( 'orlt_msg_status' );
-		$from      = $creds['from'];
-		$to_addr   = $to;
-
-		$result = $this->request(
-			'POST',
-			'Messages.json',
-			array(
-				'To'                   => $to_addr,
-				'From'                 => $from,
-				'Body'                 => $body,
-				'StatusCallback'       => $status_cb,
-				'StatusCallbackMethod' => 'POST',
-			)
-		);
-
-		if ( empty( $result['success'] ) ) {
-			return array(
-				'success' => false,
-				'error'   => $result['error'] ?? __( 'Unknown Twilio error', 'orderring-lite' ),
-			);
-		}
-
-		$data = $result['data'];
-		if ( empty( $data['sid'] ) ) {
-			return array(
-				'success' => false,
-				'error'   => __( 'Unknown Twilio error', 'orderring-lite' ),
-			);
+		// One transport call. A failed or unknown result is returned as is and never
+		// retried through a different provider, so a text that may have been accepted
+		// is not sent twice.
+		$status_cb = 'twilio' === $provider->id() ? $this->webhook_url( 'orlt_msg_status' ) : ORLT_Webhooks::rest_url( $provider->id() . '/status' );
+		$data      = $provider->send( $to, $body, $status_cb );
+		if ( empty( $data['success'] ) || empty( $data['sid'] ) ) {
+			$data['success'] = false;
+			if ( empty( $data['error'] ) ) {
+				/* translators: %s: SMS provider name */
+				$data['error'] = sprintf( __( 'Unknown %s error', 'orderring-lite' ), $provider->label() );
+			}
+			return $data;
 		}
 
 		ORLT_Logger::instance()->log(
 			array(
-				'order_id'   => $order_id,
-				'phone'      => $to,
-				'direction'  => 'outbound',
-				'type'       => 'sms',
-				'body'       => $body,
-				'twilio_sid' => $data['sid'],
-				'status'     => isset( $data['status'] ) ? $data['status'] : 'queued',
+				'order_id'     => $order_id,
+				'phone'        => $to,
+				'direction'    => 'outbound',
+				'type'         => 'sms',
+				'body'         => $body,
+				'twilio_sid'   => $data['sid'],
+				'status'       => isset( $data['status'] ) ? $data['status'] : 'queued',
+				'context_type' => isset( $args['context_type'] ) ? (string) $args['context_type'] : '',
+				'context_id'   => isset( $args['context_id'] ) ? (int) $args['context_id'] : 0,
 			)
 		);
-		return array(
+		$out = array(
 			'success' => true,
 			'sid'     => $data['sid'],
 			'status'  => $data['status'] ?? 'queued',
 			'body'    => $body,
 		);
+		if ( 'twilio' !== $provider->id() ) {
+			$out['provider'] = $provider->id();
+		}
+		return $out;
+	}
+
+	/**
+	 * Provider every text is sent through (Twilio, Vonage or Plivo).
+	 *
+	 * @return ORLT_SMS_Provider
+	 */
+	public function sms_provider() {
+		return ORLT_SMS_Providers::current();
+	}
+
+	/**
+	 * Whether texts can be sent with the selected provider's credentials.
+	 * (is_configured() keeps meaning "Twilio is configured".)
+	 *
+	 * @return bool
+	 */
+	public function sms_is_configured() {
+		return $this->sms_provider()->is_configured();
 	}
 
 	public function customer_consented_sms( $order_id ) {
-		$order = wc_get_order( $order_id );
+		$order = ORLT_Woo::order( $order_id );
 		if ( ! $order ) {
 			return false;
 		}
@@ -705,7 +777,7 @@ class ORLT_Twilio {
 	 * @return string
 	 */
 	public function get_sms_consent_state( $order_id ) {
-		$order = wc_get_order( $order_id );
+		$order = ORLT_Woo::order( $order_id );
 		if ( ! $order ) {
 			return 'unknown';
 		}
@@ -760,7 +832,7 @@ class ORLT_Twilio {
 		}
 
 		if ( $order_id ) {
-			$order = wc_get_order( $order_id );
+			$order = ORLT_Woo::order( $order_id );
 			if ( $order ) {
 				$order->update_meta_data( $meta_key, $value );
 				$order->update_meta_data( '_orlt_sms_consent', $value );

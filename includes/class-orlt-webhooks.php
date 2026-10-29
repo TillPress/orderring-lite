@@ -91,7 +91,133 @@ class ORLT_Webhooks {
 				)
 			);
 		}
+
+		// Vonage / Plivo inbound SMS and delivery receipts. Registered whichever provider
+		// is selected, so a STOP that reaches a previously used provider is still honored.
+		foreach ( array( 'vonage', 'plivo' ) as $provider_id ) {
+			foreach ( array( 'inbound', 'status' ) as $kind ) {
+				register_rest_route(
+					self::REST_NAMESPACE,
+					'/' . $provider_id . '/' . $kind,
+					array(
+						'methods'             => array( 'GET', 'POST' ),
+						'callback'            => function ( $request ) use ( $provider_id, $kind ) {
+							return $this->rest_provider_webhook( $request, $provider_id, $kind );
+						},
+						'permission_callback' => '__return_true', // Authenticated via the provider's signature.
+					)
+				);
+			}
+		}
 	}
+
+	/**
+	 * REST entry for Vonage / Plivo webhooks.
+	 *
+	 * @param WP_REST_Request $request     Request.
+	 * @param string          $provider_id vonage|plivo.
+	 * @param string          $kind        inbound|status.
+	 * @return WP_REST_Response
+	 */
+	public function rest_provider_webhook( $request, $provider_id, $kind ) {
+		$params = $request->get_json_params();
+		if ( empty( $params ) || ! is_array( $params ) ) {
+			$params = $request->get_body_params();
+		}
+		if ( empty( $params ) || ! is_array( $params ) ) {
+			$params = $request->get_query_params();
+		}
+		$params = is_array( $params ) ? $params : array();
+		// Plain permalinks put the route in the query string; it is ours, not the provider's.
+		unset( $params['rest_route'] );
+
+		$headers = array();
+		foreach ( (array) $request->get_headers() as $name => $values ) {
+			$headers[ str_replace( '_', '-', strtolower( (string) $name ) ) ] = is_array( $values ) ? (string) reset( $values ) : (string) $values;
+		}
+
+		$out = $this->handle_provider_webhook(
+			$provider_id,
+			$kind,
+			$params,
+			$headers,
+			self::rest_url( $provider_id . '/' . $kind ),
+			(string) $request->get_method()
+		);
+		return new WP_REST_Response( $out['body'], $out['code'] );
+	}
+
+	/**
+	 * Verify and process one Vonage / Plivo webhook. Replies to STOP/HELP/START go back
+	 * through the provider's API (these providers have no TwiML-style reply).
+	 *
+	 * @param string $provider_id vonage|plivo.
+	 * @param string $kind        inbound|status.
+	 * @param array  $params      Request parameters (unslashed).
+	 * @param array  $headers     Headers, lower-case dashed keys.
+	 * @param string $url         Webhook URL the provider was given.
+	 * @param string $method      GET|POST.
+	 * @return array{code:int,body:string}
+	 */
+	public function handle_provider_webhook( $provider_id, $kind, array $params, array $headers, $url, $method ) {
+		$provider = ORLT_SMS_Providers::get( $provider_id );
+		if ( ! $provider ) {
+			return array(
+				'code' => 404,
+				'body' => 'Unknown provider',
+			);
+		}
+		if ( ! $provider->inbound_ready() ) {
+			return array(
+				'code' => 403,
+				'body' => 'Webhook signing secret not configured.',
+			);
+		}
+		if ( ! $provider->verify_webhook( $params, $headers, (string) $url, strtoupper( (string) $method ) ) ) {
+			return array(
+				'code' => 403,
+				'body' => 'Invalid signature.',
+			);
+		}
+
+		if ( 'status' === $kind ) {
+			$st = $provider->parse_status( $params );
+			if ( $st ) {
+				$this->apply_message_status( sanitize_text_field( $st['sid'] ), sanitize_text_field( $st['status'] ), sanitize_text_field( $st['error'] ) );
+			}
+			return array(
+				'code' => 200,
+				'body' => 'OK',
+			);
+		}
+
+		$in = $provider->parse_inbound( $params );
+		if ( ! $in ) {
+			return array(
+				'code' => 400,
+				'body' => 'Missing data',
+			);
+		}
+		$from = sanitize_text_field( $in['from'] );
+		$body = sanitize_textarea_field( $in['body'] );
+		$sid  = sanitize_text_field( $in['sid'] );
+		if ( '' === $from || '' === $body ) {
+			return array(
+				'code' => 400,
+				'body' => 'Missing data',
+			);
+		}
+
+		$res = $this->process_inbound_sms( $from, $body, $sid );
+		if ( ! $res['duplicate'] && '' !== $res['reply'] ) {
+			$provider->send( $from, $res['reply'], '' );
+		}
+		return array(
+			'code' => 200,
+			'body' => 'OK',
+		);
+	}
+
 
 	/**
 	 * REST permission gate for the Twilio webhooks.
@@ -188,12 +314,26 @@ class ORLT_Webhooks {
 		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- Twilio signed webhook, not a WP form.
 		$status = isset( $_POST['MessageStatus'] ) ? sanitize_text_field( wp_unslash( $_POST['MessageStatus'] ) ) : '';
 
+		// phpcs:ignore WordPress.Security.NonceVerification.Missing
+		$err = isset( $_POST['ErrorCode'] ) ? sanitize_text_field( wp_unslash( $_POST['ErrorCode'] ) ) : '';
+		$this->apply_message_status( $sid, $status, $err );
+
+		status_header( 200 );
+		echo 'OK';
+	}
+
+	/**
+	 * Record a delivery status (any SMS provider) and note failures on the order.
+	 *
+	 * @param string $sid    Message id.
+	 * @param string $status queued|sent|delivered|undelivered|failed.
+	 * @param string $err    Provider error code ('' = none).
+	 */
+	private function apply_message_status( $sid, $status, $err ) {
 		if ( $sid && $status ) {
 			ORLT_Logger::instance()->update_status_by_sid( $sid, $status );
 
 			if ( in_array( $status, array( 'failed', 'undelivered' ), true ) ) {
-				// phpcs:ignore WordPress.Security.NonceVerification.Missing
-				$err = isset( $_POST['ErrorCode'] ) ? sanitize_text_field( wp_unslash( $_POST['ErrorCode'] ) ) : '';
 				$this->note_order_for_sid(
 					$sid,
 					sprintf(
@@ -210,9 +350,6 @@ class ORLT_Webhooks {
 				);
 			}
 		}
-
-		status_header( 200 );
-		echo 'OK';
 	}
 
 	/**
@@ -226,7 +363,7 @@ class ORLT_Webhooks {
 		if ( ! $order_id ) {
 			return;
 		}
-		$order = wc_get_order( $order_id );
+		$order = ORLT_Woo::order( $order_id );
 		if ( $order ) {
 			$order->add_order_note( $note );
 		}
@@ -273,13 +410,42 @@ class ORLT_Webhooks {
 			return;
 		}
 
-		// Idempotency: Twilio re-delivers a webhook when it doesn't receive a 200 in time.
-		// Without a guard, a retry would double-log the message, re-toggle opt-out, and duplicate
-		// order notes. Skip re-processing a MessageSid already handled (still return a valid 200).
-		if ( self::inbound_sid_seen( $sid, 'orlt_in_sid_' ) ) {
+		$res = $this->process_inbound_sms( $from, $body, $sid );
+		if ( $res['duplicate'] ) {
 			header( 'Content-Type: text/xml; charset=utf-8' );
 			echo '<?xml version="1.0" encoding="UTF-8"?><Response></Response>';
 			return;
+		}
+		$reply = $res['reply'];
+
+		header( 'Content-Type: text/xml; charset=utf-8' );
+		echo '<?xml version="1.0" encoding="UTF-8"?>';
+		echo '<Response>';
+		if ( $reply !== '' ) {
+			echo '<Message>' . esc_xml( $reply ) . '</Message>';
+		}
+		echo '</Response>';
+	}
+
+	/**
+	 * Shared inbound-SMS path for every provider: dedupe, log, STOP/HELP/START and order
+	 * notes. The caller delivers the returned auto-reply (TwiML for Twilio, an API send
+	 * for Vonage / Plivo).
+	 *
+	 * @param string $from E.164 sender.
+	 * @param string $body Message text.
+	 * @param string $sid  Provider message id ('' = cannot dedupe).
+	 * @return array{duplicate:bool,reply:string}
+	 */
+	public function process_inbound_sms( $from, $body, $sid ) {
+		// Idempotency: providers re-deliver a webhook when it doesn't receive a 200 in time.
+		// Without a guard, a retry would double-log the message, re-toggle opt-out, and duplicate
+		// order notes. Skip re-processing a MessageSid already handled (still return a valid 200).
+		if ( self::inbound_sid_seen( $sid, 'orlt_in_sid_' ) ) {
+			return array(
+				'duplicate' => true,
+				'reply'     => '',
+			);
 		}
 
 		$logger   = ORLT_Logger::instance();
@@ -315,7 +481,7 @@ class ORLT_Webhooks {
 				__( 'You have been unsubscribed from SMS messages. Reply START to re-subscribe. Msg&data rates may apply.', 'orderring-lite' )
 			);
 			if ( $order_id ) {
-				$order = wc_get_order( $order_id );
+				$order = ORLT_Woo::order( $order_id );
 				if ( $order ) {
 					$order->add_order_note(
 						$plain
@@ -345,7 +511,7 @@ class ORLT_Webhooks {
 				__( 'You have been re-subscribed to SMS messages. Reply STOP to opt out.', 'orderring-lite' )
 			);
 			if ( $order_id ) {
-				$order = wc_get_order( $order_id );
+				$order = ORLT_Woo::order( $order_id );
 				if ( $order ) {
 					$order->add_order_note( __( 'Customer re-subscribed to SMS (START).', 'orderring-lite' ) );
 				}
@@ -353,7 +519,7 @@ class ORLT_Webhooks {
 		} else {
 			// phpcs:ignore Universal.ControlStructures.DisallowLonelyIf.Found -- Kept structurally identical to OrderRing Pro's toc-webhooks for the Lite<->Pro source-parity test.
 			if ( $order_id ) {
-				$order = wc_get_order( $order_id );
+				$order = ORLT_Woo::order( $order_id );
 				if ( $order ) {
 					$order->add_order_note(
 						$plain
@@ -388,12 +554,9 @@ class ORLT_Webhooks {
 			);
 		}
 
-		header( 'Content-Type: text/xml; charset=utf-8' );
-		echo '<?xml version="1.0" encoding="UTF-8"?>';
-		echo '<Response>';
-		if ( $reply !== '' ) {
-			echo '<Message>' . esc_xml( $reply ) . '</Message>';
-		}
-		echo '</Response>';
+		return array(
+			'duplicate' => false,
+			'reply'     => (string) $reply,
+		);
 	}
 }

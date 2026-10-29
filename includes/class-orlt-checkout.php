@@ -396,6 +396,14 @@ class ORLT_Checkout {
 			if ( $source ) {
 				$order->update_meta_data( '_orlt_sms_consent_source', sanitize_key( $source ) );
 			}
+			/**
+			 * The customer ticked the SMS consent box. The consent record listens, so it
+			 * stays the single source of truth for texts that are not about this order.
+			 *
+			 * @param WC_Order $order  Order.
+			 * @param string   $source classic|block|….
+			 */
+			do_action( 'orlt_sms_consent_given', $order, $source );
 		} else {
 			$value = 'no';
 			$order->update_meta_data( $meta_key, $value );

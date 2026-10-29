@@ -216,6 +216,9 @@ class ORLT_Demo {
 		$twilio = class_exists( 'ORLT_Twilio' ) ? ORLT_Twilio::instance() : null;
 		return array(
 			'Twilio configured'         => $twilio ? $twilio->is_configured() : false,
+			'SMS provider'              => class_exists( 'ORLT_SMS_Providers' ) ? ORLT_SMS_Providers::active_id() : 'twilio',
+			'SMS provider configured'   => $twilio ? $twilio->sms_is_configured() : false,
+			'Provider replies verified' => class_exists( 'ORLT_SMS_Providers' ) ? ORLT_SMS_Providers::current()->inbound_ready() : false,
 			'Credentials in wp-config'  => $twilio ? ( $twilio->credential_is_constant( 'sid' ) || $twilio->credential_is_constant( 'token' ) ) : false,
 			'Ready status mapped to'    => class_exists( 'ORLT_Statuses' ) ? ORLT_Statuses::mapped_ready_status() : 'unknown',
 			'Auto Ready SMS'            => (bool) get_option( 'orlt_auto_ready_enabled', 1 ) && (bool) get_option( 'orlt_auto_ready_sms', 1 ),

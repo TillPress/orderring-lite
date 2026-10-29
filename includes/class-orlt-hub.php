@@ -218,6 +218,10 @@ class ORLT_Hub {
 	 */
 	public function handle_demo_create() {
 		$this->guard( 'orlt_demo_create' );
+		if ( ! class_exists( 'WooCommerce', false ) ) {
+			$this->back( 'failed' );
+			return;
+		}
 		$result = ORLT_Demo::create();
 		$this->back( is_wp_error( $result ) ? 'failed' : 'created' );
 	}
@@ -286,7 +290,9 @@ class ORLT_Hub {
 		// Demo.
 		echo '<section class="orlt-hub-card"><h2>' . esc_html__( 'Try it with demo data', 'orderring-lite' ) . '</h2>';
 		echo '<p>' . esc_html__( 'Creates one demo order in Ready for Pickup with Local Pickup and SMS consent, so you can see the order-screen SMS box, the consent badge, and the exact pickup text your customer would get. No text is ever sent for a demo order.', 'orderring-lite' ) . '</p>';
-		if ( ORLT_Demo::exists() ) {
+		if ( ! class_exists( 'WooCommerce', false ) ) {
+			echo '<p class="description">' . esc_html__( 'Demo data needs WooCommerce, because it creates a demo order.', 'orderring-lite' ) . '</p>';
+		} elseif ( ORLT_Demo::exists() ) {
 			echo '<ul class="orlt-hub-list">';
 			foreach ( ORLT_Demo::links() as $link ) {
 				echo '<li><a href="' . esc_url( $link['url'] ) . '"' . ( ! empty( $link['new_tab'] ) ? ' target="_blank" rel="noopener noreferrer"' : '' ) . '>' . esc_html( $link['label'] ) . '</a></li>';
